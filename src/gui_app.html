@@ -1,0 +1,2709 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Codex</title>
+<style>
+  :root {
+    --gray-0: #ffffff;
+    --gray-25: #fcfcfc;
+    --gray-50: #f9f9f9;
+    --gray-75: #f3f3f3;
+    --gray-100: #ededed;
+    --gray-150: #dfdfdf;
+    --gray-200: #cdcdcd;
+    --gray-300: #afafaf;
+    --gray-400: #8f8f8f;
+    --gray-500: #5d5d5d;
+    --gray-600: #414141;
+    --gray-700: #303030;
+    --gray-750: #282828;
+    --gray-800: #212121;
+    --gray-850: #1c1c1c;
+    --gray-900: #181818;
+    --gray-925: #161616;
+    --gray-950: #131313;
+    --gray-975: #101010;
+    --gray-1000: #0d0d0d;
+    --blue-300: #339cff;
+    --blue-500: #0169cc;
+    --green-400: #04b84c;
+    --green-500: #00a240;
+    --orange-400: #fb6a22;
+    --red-400: #fa423e;
+    --red-500: #e02e2a;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+    --height-toolbar: 52px;
+    --sidebar-width: 275px;
+    --thread-max-width: 768px;
+  }
+
+  html.dark {
+    --bg-primary: #0d0d0d;
+    --bg-sidebar: #141414;
+    --bg-elevated: #212121;
+    --bg-elevated-hover: #2a2a2a;
+    --bg-subtle: #181818;
+    --bg-user-bubble: #2f2f2f;
+    --bg-hover: rgba(255, 255, 255, 0.06);
+    --bg-active: rgba(255, 255, 255, 0.10);
+    --text-primary: #ececec;
+    --text-secondary: #b4b4b4;
+    --text-tertiary: #7a7a7a;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-default: rgba(255, 255, 255, 0.13);
+    --composer-bg: #212121;
+    --composer-shadow: inset 0 0 1px 0 rgba(255, 255, 255, 0.18), 0 8px 32px rgba(0, 0, 0, 0.45);
+    --code-bg: #161616;
+    --diff-add-bg: rgba(4, 184, 76, 0.14);
+    --diff-del-bg: rgba(250, 66, 62, 0.14);
+    --btn-submit-bg: #ffffff;
+    --btn-submit-fg: #0d0d0d;
+  }
+
+  html.light {
+    --bg-primary: #ffffff;
+    --bg-sidebar: #f9f9f9;
+    --bg-elevated: #ffffff;
+    --bg-elevated-hover: #f3f3f3;
+    --bg-subtle: #f5f5f5;
+    --bg-user-bubble: #f3f3f3;
+    --bg-hover: rgba(0, 0, 0, 0.045);
+    --bg-active: rgba(0, 0, 0, 0.08);
+    --text-primary: #0d0d0d;
+    --text-secondary: #5d5d5d;
+    --text-tertiary: #8f8f8f;
+    --border-subtle: rgba(0, 0, 0, 0.07);
+    --border-default: rgba(0, 0, 0, 0.12);
+    --composer-bg: #ffffff;
+    --composer-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 8px 0 rgba(0, 0, 0, 0.05), 0 4px 40px 8px rgba(0, 0, 0, 0.04);
+    --code-bg: #f7f7f8;
+    --diff-add-bg: rgba(0, 162, 64, 0.12);
+    --diff-del-bg: rgba(224, 46, 42, 0.12);
+    --btn-submit-bg: #0d0d0d;
+    --btn-submit-fg: #ffffff;
+  }
+
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+    background: var(--bg-primary); color: var(--text-primary);
+    user-select: none;
+  }
+
+  #app { display: flex; width: 100vw; height: 100vh; overflow: hidden; position: relative; }
+
+  /* Sidebar (275px, collapsible like ChatGPT.app) */
+  #sidebar {
+    width: var(--sidebar-width); min-width: var(--sidebar-width); height: 100vh;
+    background: var(--bg-sidebar); border-right: 1px solid var(--border-subtle);
+    display: flex; flex-direction: column; transition: width 0.18s cubic-bezier(0.16, 1, 0.3, 1), min-width 0.18s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease;
+    z-index: 20;
+  }
+  #sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; border-right: none; opacity: 0; }
+
+  /* macOS traffic lights clearance header inside sidebar */
+  .sidebar-top {
+    height: var(--height-toolbar); padding: 0 10px 0 80px;
+    display: flex; align-items: center; justify-content: flex-end; gap: 2px;
+    flex-shrink: 0;
+  }
+  .icon-btn {
+    width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent;
+    color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: background 0.12s, color 0.12s; flex-shrink: 0;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .icon-btn svg { width: 18px; height: 18px; }
+
+  .sidebar-nav { padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px;
+    color: var(--text-primary); font-size: 13.5px; font-weight: 450; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .nav-row:hover { background: var(--bg-hover); }
+  .nav-row.active { background: var(--bg-active); font-weight: 500; }
+  .nav-row svg { width: 17px; height: 17px; color: var(--text-secondary); flex-shrink: 0; }
+  .nav-row .shortcut { margin-left: auto; font-size: 11px; color: var(--text-tertiary); }
+
+  .sidebar-search { padding: 6px 10px; }
+  .search-box {
+    display: flex; align-items: center; gap: 8px; background: var(--bg-hover);
+    border: 1px solid transparent; border-radius: 8px; padding: 5px 10px;
+  }
+  .search-box:focus-within { border-color: var(--border-default); background: var(--bg-subtle); }
+  .search-box svg { width: 14px; height: 14px; color: var(--text-tertiary); flex-shrink: 0; }
+  .search-box input {
+    border: none; background: transparent; color: var(--text-primary); font-size: 12.5px;
+    width: 100%; outline: none; font-family: inherit;
+  }
+  .search-box input::placeholder { color: var(--text-tertiary); }
+
+  .sidebar-section-label {
+    padding: 12px 18px 4px; font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+    letter-spacing: 0.02em; display: flex; align-items: center; justify-content: space-between;
+  }
+
+  #thread-list {
+    flex: 1; overflow-y: auto; padding: 2px 8px 12px; display: flex; flex-direction: column; gap: 1px;
+  }
+  .project-group { margin-bottom: 6px; }
+  .project-hdr {
+    display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 8px;
+    font-size: 12.5px; font-weight: 500; color: var(--text-secondary); cursor: pointer;
+  }
+  .project-hdr:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .project-hdr svg { width: 15px; height: 15px; color: var(--text-tertiary); }
+
+  .thread-row {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px;
+    cursor: pointer; font-size: 13px; color: var(--text-secondary); position: relative;
+    transition: background 0.1s, color 0.1s;
+  }
+  .thread-row:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .thread-row.active { background: var(--bg-active); color: var(--text-primary); font-weight: 500; }
+  .thread-status-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--blue-300); flex-shrink: 0;
+    box-shadow: 0 0 6px var(--blue-300); animation: pulse 1.4s infinite ease-in-out;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+  .thread-title {
+    flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .thread-actions {
+    display: none; align-items: center; gap: 2px; margin-left: auto;
+  }
+  .thread-row:hover .thread-actions { display: flex; }
+  .thread-act-btn {
+    width: 22px; height: 22px; border-radius: 5px; border: none; background: transparent;
+    color: var(--text-tertiary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px;
+  }
+  .thread-act-btn:hover { background: var(--bg-active); color: var(--text-primary); }
+
+  .sidebar-footer {
+    padding: 8px 10px; border-top: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .account-pill {
+    display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px;
+    cursor: pointer; flex: 1; min-width: 0;
+  }
+  .account-pill:hover { background: var(--bg-hover); }
+  .avatar-circle {
+    width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #339cff, #10a37f);
+    color: #fff; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .account-info { display: flex; flex-direction: column; min-width: 0; }
+  .account-name { font-size: 12.5px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .account-sub { font-size: 11px; color: var(--text-tertiary); }
+
+  /* Main Workspace Column */
+  #main-col {
+    flex: 1; height: 100vh; display: flex; flex-direction: column; position: relative; min-width: 0;
+    background: var(--bg-primary);
+  }
+
+  /* Top Window Toolbar */
+  #topbar {
+    height: var(--height-toolbar); padding: 0 16px; display: flex; align-items: center;
+    justify-content: space-between; gap: 12px; flex-shrink: 0;
+    border-bottom: 1px solid transparent; transition: padding-left 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  #topbar.with-border { border-bottom-color: var(--border-subtle); }
+  #topbar.sidebar-closed { padding-left: 82px; }
+  .topbar-left, .topbar-right { display: flex; align-items: center; gap: 8px; }
+  .topbar-title {
+    font-size: 13.5px; font-weight: 500; color: var(--text-primary);
+    max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pill-badge {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 500; color: var(--text-secondary); background: var(--bg-hover);
+    border: 1px solid var(--border-subtle); cursor: pointer; transition: background 0.12s, border-color 0.12s;
+  }
+  .pill-badge:hover { background: var(--bg-active); color: var(--text-primary); }
+  .pill-badge svg { width: 14px; height: 14px; }
+  .diff-stat-add { color: var(--green-400); font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; }
+  .diff-stat-del { color: var(--red-400); font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; }
+
+  /* Home Hero Empty State (shown when thread has no turns yet) */
+  #home-hero {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 24px 32px; max-width: 820px; width: 100%; margin: 0 auto; gap: 22px;
+  }
+  #home-hero.hidden { display: none; }
+  .codex-emblem {
+    width: 46px; height: 46px; border-radius: 14px; display: flex; align-items: center; justify-content: center;
+    color: var(--text-primary);
+  }
+  .codex-emblem svg { width: 42px; height: 42px; }
+  .hero-heading {
+    font-size: 26px; font-weight: 500; letter-spacing: -0.02em; color: var(--text-primary);
+    margin: 0; text-align: center;
+  }
+  .hero-sub {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary);
+    padding: 5px 12px; border-radius: 999px; background: var(--bg-hover); cursor: pointer;
+    border: 1px solid var(--border-subtle);
+  }
+  .hero-sub:hover { background: var(--bg-active); color: var(--text-primary); }
+
+  .starter-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; width: 100%; max-width: 680px;
+    margin-top: 4px;
+  }
+  .starter-card {
+    padding: 12px 14px; border-radius: 14px; background: var(--bg-subtle);
+    border: 1px solid var(--border-subtle); cursor: pointer; display: flex; align-items: flex-start;
+    gap: 10px; transition: background 0.14s, border-color 0.14s, transform 0.1s;
+  }
+  .starter-card:hover { background: var(--bg-hover); border-color: var(--border-default); }
+  .starter-card svg { width: 16px; height: 16px; color: var(--text-secondary); margin-top: 2px; flex-shrink: 0; }
+  .starter-card-title { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+  .starter-card-desc { font-size: 11.5px; color: var(--text-tertiary); margin-top: 2px; }
+
+  /* Conversation Stream */
+  #conversation-wrap {
+    flex: 1; overflow-y: auto; padding: 24px 24px 36px; display: flex; flex-direction: column;
+    align-items: center; user-select: text;
+  }
+  #conversation-wrap.hidden { display: none; }
+  #messages {
+    width: 100%; max-width: var(--thread-max-width); display: flex; flex-direction: column; gap: 22px;
+  }
+
+  /* Shimmer effect for active thinking / running tool labels (exact ChatGPT.app shimmer) */
+  @keyframes codex-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .shimmer-text {
+    background: linear-gradient(90deg, var(--text-tertiary) 0%, var(--text-primary) 50%, var(--text-tertiary) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: codex-shimmer 2.2s infinite linear;
+  }
+
+  /* Conversation Turn Block */
+  .turn-block {
+    display: flex; flex-direction: column; gap: 10px; width: 100%;
+  }
+
+  /* User Message Bubble + Hover Action Bar (exact user-message-56c42e441c31.js) */
+  .msg-user-group {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 4px; width: 100%;
+  }
+  .msg-user-bubble {
+    max-width: 70%; border-radius: 18px; padding: 10px 16px;
+    background: var(--bg-user-bubble); color: var(--text-primary);
+    font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  }
+  .msg-user-meta {
+    display: flex; align-items: center; gap: 4px; height: 22px; padding-right: 4px;
+    opacity: 0; transition: opacity 0.14s ease; color: var(--text-tertiary); font-size: 11.5px;
+    user-select: none;
+  }
+  .msg-user-group:hover .msg-user-meta { opacity: 1; }
+  .msg-action-btn {
+    border: none; background: transparent; color: var(--text-tertiary); cursor: pointer;
+    padding: 3px 5px; border-radius: 5px; display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11.5px; transition: color 0.12s, background 0.12s;
+  }
+  .msg-action-btn:hover { color: var(--text-primary); background: var(--bg-hover); }
+  .msg-action-btn svg { width: 13.5px; height: 13.5px; }
+
+  /* Agent Activity Stack (Thinking + Tool Calls + Commentary) */
+  .turn-activity-wrap {
+    display: flex; flex-direction: column; gap: 4px; width: 100%;
+  }
+  .turn-activity-wrap.empty { display: none; }
+  .turn-activity-list {
+    display: flex; flex-direction: column; gap: 3px; width: 100%;
+  }
+  .turn-activity-wrap.collapsed-steps .turn-activity-list {
+    display: none;
+  }
+
+  /* Worked for Xs › Turn Disclosure & Horizontal Divider (collapsed-turn-disclosure-e48e592fd9e8.js) */
+  .turn-worked-row {
+    display: none; align-items: center; gap: 10px; width: 100%; margin: 4px 0 6px;
+    user-select: none;
+  }
+  .turn-worked-row.visible { display: flex; }
+  .turn-worked-btn {
+    border: none; background: transparent; padding: 2px 0; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 12.5px; color: var(--text-tertiary); transition: color 0.12s; flex-shrink: 0;
+  }
+  .turn-worked-btn:hover { color: var(--text-primary); }
+  .turn-worked-btn svg {
+    width: 13px; height: 13px; transition: transform 0.15s ease;
+    transform: rotate(90deg);
+  }
+  .turn-activity-wrap.collapsed-steps .turn-worked-btn svg {
+    transform: rotate(0deg);
+  }
+  .turn-worked-line {
+    flex: 1; height: 1px; background: var(--border-subtle);
+  }
+
+  /* Reasoning / Thinking Inline Disclosure (exact reasoningItem in sites-end-resource.js) */
+  .reasoning-item {
+    display: flex; flex-direction: column; align-items: flex-start; width: 100%;
+  }
+  .reasoning-hdr {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 0;
+    font-size: 13.5px; line-height: 1.45; color: var(--text-tertiary);
+    cursor: pointer; user-select: none; border: none; background: transparent;
+    text-align: left; transition: color 0.12s;
+  }
+  .reasoning-hdr:hover { color: var(--text-primary); }
+  .reasoning-icon {
+    width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-tertiary); flex-shrink: 0;
+  }
+  .reasoning-icon svg { width: 14px; height: 14px; }
+  .reasoning-chev {
+    width: 13px; height: 13px; color: var(--text-tertiary); transition: transform 0.15s ease;
+    opacity: 0.7; flex-shrink: 0;
+  }
+  .reasoning-item.open .reasoning-chev { transform: rotate(90deg); opacity: 1; }
+  .reasoning-body {
+    display: none; width: 100%; margin: 3px 0 6px 6px; padding-left: 12px;
+    border-left: 1.5px solid var(--border-default);
+    color: var(--text-secondary); font-size: 13px; line-height: 1.55;
+  }
+  .reasoning-body p { margin: 0 0 6px; }
+  .reasoning-body p:last-child { margin-bottom: 0; }
+  .reasoning-item.open .reasoning-body { display: block; }
+  .reasoning-item.streaming .reasoning-body {
+    display: block; max-height: 140px; overflow-y: auto;
+    -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 88%, transparent 100%);
+    mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 88%, transparent 100%);
+  }
+
+  /* Inline Tool Call Row (RC / EC / NC / WC / BT in sites-end-resource.js) */
+  .tool-inline-item {
+    display: flex; flex-direction: column; align-items: flex-start; width: 100%;
+  }
+  .tool-inline-hdr {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 0;
+    font-size: 13.5px; line-height: 1.45; color: var(--text-tertiary);
+    cursor: pointer; user-select: none; max-width: 100%; transition: color 0.12s;
+  }
+  .tool-inline-hdr:hover { color: var(--text-primary); }
+  .tool-inline-icon {
+    width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-tertiary); flex-shrink: 0;
+  }
+  .tool-inline-icon svg { width: 14px; height: 14px; }
+  .tool-verb { color: var(--text-secondary); font-weight: 450; flex-shrink: 0; }
+  .tool-target {
+    color: var(--text-tertiary); font-family: var(--font-sans);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px;
+  }
+  .tool-target.mono {
+    font-family: var(--font-mono); font-size: 12.5px;
+  }
+  .tool-file-link {
+    color: var(--text-secondary); cursor: pointer; text-decoration: none;
+  }
+  .tool-file-link:hover {
+    color: var(--blue-300); text-decoration: underline;
+  }
+  .tool-pill-code {
+    font-family: var(--font-mono); font-size: 12px; padding: 1px 5px; border-radius: 5px;
+    background: var(--bg-hover); color: var(--text-secondary);
+  }
+  .tool-meta-badge {
+    font-size: 11.5px; color: var(--text-tertiary); flex-shrink: 0;
+  }
+  .tool-meta-badge.failed { color: var(--red-400); }
+  .tool-inline-chev {
+    width: 13px; height: 13px; color: var(--text-tertiary); transition: transform 0.15s ease;
+    opacity: 0; flex-shrink: 0;
+  }
+  .tool-inline-hdr:hover .tool-inline-chev,
+  .tool-inline-item.open .tool-inline-chev { opacity: 0.85; }
+  .tool-inline-item.open .tool-inline-chev { transform: rotate(90deg); }
+
+  /* Expandable Terminal Output Box under commandExecution */
+  .tool-term-box {
+    display: none; width: 100%; margin: 4px 0 8px 0;
+    border-radius: 10px; border: 1px solid var(--border-subtle);
+    background: var(--code-bg); overflow: hidden;
+  }
+  .tool-inline-item.open .tool-term-box { display: block; }
+  .tool-term-hdr {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 11px; font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--text-secondary); background: rgba(127, 127, 127, 0.06);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .tool-term-cmd {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary);
+  }
+  .tool-term-pre {
+    margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.45;
+    color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
+  }
+
+  /* File Change Unified Diff Card (BT in sites-end-resource.js) */
+  .tool-diff-card {
+    display: none; width: 100%; margin: 5px 0 8px 0;
+    border-radius: 10px; border: 1px solid var(--border-subtle);
+    background: var(--code-bg); overflow: hidden;
+  }
+  .tool-inline-item.open .tool-diff-card { display: flex; flex-direction: column; }
+  .tool-diff-hdr {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 11px; background: rgba(127, 127, 127, 0.06);
+    border-bottom: 1px solid var(--border-subtle); font-size: 12px;
+  }
+  .tool-diff-hdr-left {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .tool-diff-body {
+    max-height: 280px; overflow: auto; font-family: var(--font-mono);
+    font-size: 12px; line-height: 1.45; padding: 6px 0; white-space: pre;
+  }
+  .diff-line-add { background: var(--diff-add-bg); color: #3ddc84; display: block; padding: 0 12px; }
+  .diff-line-del { background: var(--diff-del-bg); color: #ff6b6b; display: block; padding: 0 12px; }
+  .diff-line-hunk { color: var(--blue-300); display: block; padding: 0 12px; opacity: 0.85; }
+  .diff-line-ctx { color: var(--text-secondary); display: block; padding: 0 12px; }
+
+  /* Intermediate Commentary Agent Message */
+  .msg-commentary {
+    width: 100%; color: var(--text-secondary); font-size: 13.5px; line-height: 1.55;
+    padding: 2px 0;
+  }
+  .msg-commentary p { margin: 0 0 6px; }
+  .msg-commentary p:last-child { margin-bottom: 0; }
+
+  /* Assistant Final Markdown Message + Action Bar */
+  .msg-agent-wrap {
+    display: flex; flex-direction: column; gap: 6px; width: 100%;
+  }
+  .msg-agent {
+    width: 100%; color: var(--text-primary); font-size: 14.5px; line-height: 1.65;
+    word-break: break-word;
+  }
+  .msg-agent p { margin: 0 0 12px; }
+  .msg-agent p:last-child { margin-bottom: 0; }
+  .msg-agent h1, .msg-agent h2, .msg-agent h3, .msg-agent h4 {
+    margin: 18px 0 8px; font-weight: 600; line-height: 1.3; color: var(--text-primary);
+  }
+  .msg-agent h1:first-child, .msg-agent h2:first-child, .msg-agent h3:first-child { margin-top: 2px; }
+  .msg-agent h1 { font-size: 19px; }
+  .msg-agent h2 { font-size: 16.5px; }
+  .msg-agent h3 { font-size: 15px; }
+  .msg-agent h4 { font-size: 14px; }
+  .msg-agent ul, .msg-agent ol { margin: 6px 0 12px; padding-left: 22px; }
+  .msg-agent li { margin-bottom: 4px; }
+  .msg-agent li > p { margin-bottom: 4px; }
+  .msg-agent blockquote {
+    margin: 8px 0 12px; padding: 4px 12px; border-left: 2.5px solid var(--border-default);
+    color: var(--text-secondary);
+  }
+  .msg-agent hr {
+    border: none; border-top: 1px solid var(--border-subtle); margin: 14px 0;
+  }
+  .msg-agent table {
+    width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 13px;
+  }
+  .msg-agent th, .msg-agent td {
+    border: 1px solid var(--border-subtle); padding: 6px 10px; text-align: left;
+  }
+  .msg-agent th { background: var(--bg-subtle); font-weight: 600; }
+  .msg-agent code.inline-code {
+    font-family: var(--font-mono); font-size: 12.5px; padding: 1.5px 5px; border-radius: 5px;
+    background: var(--bg-hover); border: 1px solid var(--border-subtle);
+  }
+  .code-block-wrap {
+    margin: 10px 0 14px; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border-subtle); background: var(--code-bg);
+  }
+  .code-block-hdr {
+    display: flex; align-items: center; justify-content: space-between; padding: 6px 12px;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-tertiary);
+    background: rgba(127, 127, 127, 0.06); border-bottom: 1px solid var(--border-subtle);
+  }
+  .code-copy-btn {
+    border: none; background: transparent; color: var(--text-secondary); font-size: 11.5px;
+    cursor: pointer; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .code-copy-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .code-block-pre {
+    margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--font-mono);
+    font-size: 12.5px; line-height: 1.5; color: var(--text-primary); white-space: pre;
+  }
+  .msg-agent-actions {
+    display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.14s ease;
+    user-select: none; margin-top: -2px;
+  }
+  .turn-block:hover .msg-agent-actions,
+  .msg-agent-wrap:hover .msg-agent-actions { opacity: 1; }
+
+  /* Inline Approval Request Card (matching approvalRequestCard) */
+  .approval-card {
+    border-radius: 16px; border: 1px solid rgba(251, 106, 34, 0.45);
+    background: var(--bg-subtle); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  }
+  .approval-hdr { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; color: var(--orange-400); }
+  .approval-cmd {
+    font-family: var(--font-mono); font-size: 12px; padding: 10px 12px; border-radius: 10px;
+    background: var(--code-bg); border: 1px solid var(--border-subtle);
+    white-space: pre-wrap; max-height: 200px; overflow-y: auto; color: var(--text-primary);
+  }
+  .approval-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .btn-pill {
+    padding: 6px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border-default); background: var(--bg-elevated);
+    color: var(--text-primary); transition: opacity 0.12s, background 0.12s;
+  }
+  .btn-pill:hover { background: var(--bg-elevated-hover); }
+  .btn-pill.primary { background: var(--btn-submit-bg); color: var(--btn-submit-fg); border-color: transparent; }
+  .btn-pill.danger { background: rgba(250, 66, 62, 0.15); color: var(--red-400); border-color: rgba(250, 66, 62, 0.35); }
+
+  /* Composer Dock & 28px Pill (exact ChatGPT.app composer) */
+  #composer-host {
+    width: 100%; max-width: var(--thread-max-width); margin: 0 auto; padding: 0 20px 18px;
+    position: relative; z-index: 10;
+  }
+  .composer-pill {
+    border-radius: 28px; background: var(--composer-bg); box-shadow: var(--composer-shadow);
+    border: 1px solid var(--border-subtle); padding: 12px 14px 10px 16px;
+    display: flex; flex-direction: column; gap: 8px; position: relative;
+  }
+  #composer-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  #composer-chips:empty { display: none; }
+  .context-chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 8px;
+    background: var(--bg-hover); border: 1px solid var(--border-subtle);
+    font-size: 12px; font-family: var(--font-mono); color: var(--text-primary);
+  }
+  .context-chip button {
+    border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; padding: 0 2px;
+  }
+  #composer-input {
+    width: 100%; border: none; background: transparent; color: var(--text-primary);
+    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.5; resize: none;
+    outline: none; max-height: 200px; min-height: 26px; padding: 0; overflow-y: auto;
+  }
+  #composer-input::placeholder { color: var(--text-tertiary); }
+
+  .composer-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px; padding-top: 2px;
+  }
+  .composer-controls-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .composer-chip-btn {
+    display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+    border-radius: 999px; border: 1px solid var(--border-subtle); background: transparent;
+    color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .composer-chip-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .composer-chip-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .composer-chip-btn.sandbox-warn { color: var(--orange-400); border-color: rgba(251, 106, 34, 0.35); }
+  .composer-chip-btn.sandbox-Write { color: var(--blue-300); }
+
+  .composer-submit-btn {
+    width: 32px; height: 32px; border-radius: 50%; border: none;
+    background: var(--btn-submit-bg); color: var(--btn-submit-fg);
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+    transition: opacity 0.12s, transform 0.1s; flex-shrink: 0;
+  }
+  .composer-submit-btn:disabled { opacity: 0.3; cursor: default; }
+  .composer-submit-btn.stop { background: var(--text-primary); color: var(--bg-primary); }
+  .composer-submit-btn svg { width: 16px; height: 16px; }
+
+  /* Floating Autocomplete Popover (@ files and / commands) */
+  #autocomplete-popover {
+    position: absolute; bottom: calc(100% + 8px); left: 20px; width: 360px; max-height: 240px;
+    overflow-y: auto; border-radius: 14px; background: var(--bg-elevated);
+    border: 1px solid var(--border-default); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    padding: 6px; display: none; z-index: 40;
+  }
+  #autocomplete-popover.open { display: block; }
+  .ac-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 12.5px;
+    color: var(--text-primary);
+  }
+  .ac-item:hover, .ac-item.selected { background: var(--bg-active); }
+  .ac-item-sub { font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); }
+
+  /* Right-Side Review / Diff / Files / Terminal Drawer */
+  #inspector-drawer {
+    width: 390px; min-width: 390px; height: 100vh; background: var(--bg-sidebar);
+    border-left: 1px solid var(--border-subtle); display: flex; flex-direction: column;
+    transition: width 0.18s cubic-bezier(0.16, 1, 0.3, 1), min-width 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  #inspector-drawer.closed { width: 0; min-width: 0; overflow: hidden; border-left: none; }
+  .drawer-hdr {
+    height: var(--height-toolbar); padding: 0 12px; display: flex; align-items: center;
+    justify-content: space-between; border-bottom: 1px solid var(--border-subtle);
+  }
+  .drawer-tabs { display: flex; gap: 4px; }
+  .drawer-tab {
+    padding: 5px 10px; border-radius: 7px; font-size: 12px; font-weight: 500;
+    color: var(--text-secondary); background: transparent; border: none; cursor: pointer;
+  }
+  .drawer-tab.active { background: var(--bg-active); color: var(--text-primary); }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 12px; font-size: 12.5px; user-select: text; }
+
+  /* Modal Overlay & Floating Popovers */
+  #modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(3px);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  #modal-backdrop.open { display: flex; }
+  .modal-card {
+    width: 520px; max-width: 92vw; max-height: 82vh; border-radius: 18px;
+    background: var(--bg-elevated); border: 1px solid var(--border-default);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal-hdr {
+    padding: 14px 18px; border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; font-weight: 600; font-size: 14.5px;
+  }
+  .modal-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  .modal-input {
+    width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border-default);
+    background: var(--bg-subtle); color: var(--text-primary); font-family: var(--font-mono); font-size: 12.5px;
+    outline: none;
+  }
+
+  /* Floating Composer & Topbar Popover Menus (Exact ChatGPT.app dropdowns) */
+  .floating-menu {
+    position: fixed; min-width: 260px; max-width: 340px; max-height: 380px;
+    overflow-y: auto; border-radius: 14px; background: var(--bg-elevated);
+    border: 1px solid var(--border-default); box-shadow: 0 14px 38px rgba(0, 0, 0, 0.48);
+    padding: 6px; display: none; z-index: 90; user-select: none;
+  }
+  .floating-menu.open { display: flex; flex-direction: column; gap: 2px; }
+  .menu-section-title {
+    padding: 6px 10px 4px; font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+  }
+  .menu-search {
+    margin: 2px 4px 6px; padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--border-subtle); background: var(--bg-subtle);
+    color: var(--text-primary); font-size: 12.5px; outline: none;
+  }
+  .menu-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 10px; border-radius: 9px; cursor: pointer; font-size: 13px;
+    color: var(--text-primary); background: transparent; border: none; width: 100%; text-align: left;
+  }
+  .menu-item:hover { background: var(--bg-hover); }
+  .menu-item.active { background: var(--bg-active); }
+  .menu-item-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+  .menu-item-left svg { width: 15px; height: 15px; color: var(--text-secondary); flex-shrink: 0; }
+  .menu-item-text { display: flex; flex-direction: column; min-width: 0; }
+  .menu-item-title { font-size: 13px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .menu-item-desc { font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .menu-check { width: 15px; height: 15px; color: var(--text-primary); flex-shrink: 0; }
+  .menu-divider { height: 1px; background: var(--border-subtle); margin: 4px 4px; }
+
+  /* Full Multi-Page Settings View (matching ChatGPT.app Settings layout) */
+  #settings-view {
+    flex: 1; display: none; height: calc(100vh - var(--height-toolbar)); overflow: hidden;
+    border-top: 1px solid var(--border-subtle);
+  }
+  #settings-view.open { display: flex; }
+  .settings-nav {
+    width: 220px; min-width: 220px; border-right: 1px solid var(--border-subtle);
+    padding: 14px 10px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto;
+    background: var(--bg-subtle);
+  }
+  .settings-back-btn {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 8px;
+    border-radius: 8px; border: none; background: transparent; color: var(--text-secondary);
+    font-size: 13px; font-weight: 500; cursor: pointer; text-align: left;
+  }
+  .settings-back-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .settings-nav-btn {
+    display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px;
+    border: none; background: transparent; color: var(--text-secondary); font-size: 13px;
+    cursor: pointer; text-align: left;
+  }
+  .settings-nav-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .settings-nav-btn.active { background: var(--bg-active); color: var(--text-primary); font-weight: 500; }
+  .settings-content {
+    flex: 1; overflow-y: auto; padding: 28px 36px; max-width: 780px; user-select: text;
+  }
+  .settings-h1 { font-size: 19px; font-weight: 600; margin: 0 0 6px; }
+  .settings-sub { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+  .settings-card {
+    border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-subtle);
+    padding: 14px 16px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .settings-row-label { font-size: 13.5px; font-weight: 500; color: var(--text-primary); }
+  .settings-row-desc { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+  .settings-select {
+    padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-default);
+    background: var(--bg-elevated); color: var(--text-primary); font-size: 12.5px; outline: none;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Left Sidebar (275px, collapsible) -->
+  <aside id="sidebar">
+    <div class="sidebar-top" onmousedown="maybeDragWindow(event)">
+      <button class="icon-btn" title="Toggle sidebar (⌘S)" onclick="toggleSidebar()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      </button>
+      <button class="icon-btn" title="New thread (⌘N)" onclick="closeSettingsView();newThread()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      </button>
+    </div>
+
+    <div class="sidebar-nav">
+      <div class="nav-row active" id="nav-home" onclick="closeSettingsView();newThread()">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h3a1 1 0 001-1v-3h2v3a1 1 0 001 1h3a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg>
+        <span>New thread</span>
+        <span class="shortcut">⌘N</span>
+      </div>
+      <div class="nav-row" onclick="openSettingsView('skills')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        <span>Skills &amp; Plugins</span>
+      </div>
+      <div class="nav-row" onclick="openSettingsView('mcp')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>MCP Servers</span>
+      </div>
+    </div>
+
+    <div class="sidebar-search">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="thread-search" type="text" placeholder="Search threads… (⌘K)" oninput="refreshThreads()" />
+      </div>
+    </div>
+
+    <div class="sidebar-section-label">
+      <span>Projects &amp; Threads</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="thread-count" style="font-weight:400"></span>
+        <button class="thread-act-btn" title="Add or create project" onclick="openCreateProjectDialog()" style="font-size:14px;padding:0 5px">+</button>
+      </div>
+    </div>
+    <div id="thread-list"></div>
+
+    <div class="sidebar-footer">
+      <div class="account-pill" onclick="openSettingsView('general')" title="Open Settings (⌘,)">
+        <div class="avatar-circle" id="account-avatar">C</div>
+        <div class="account-info">
+          <div class="account-name" id="account-label">Codex Settings</div>
+          <div class="account-sub" id="account-sub">Local Workspace</div>
+        </div>
+      </div>
+      <button class="icon-btn" title="Settings (⌘,)" onclick="openSettingsView('general')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Center Main Column -->
+  <main id="main-col">
+    <!-- Top Window Bar (draggable on macOS) -->
+    <header id="topbar" onmousedown="maybeDragWindow(event)">
+      <div class="topbar-left">
+        <button class="icon-btn" id="topbar-sidebar-btn" style="display:none" title="Show sidebar (⌘S)" onclick="toggleSidebar()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        </button>
+        <span class="topbar-title" id="topbar-title">New thread</span>
+        <span class="pill-badge" id="branch-badge" style="display:none" onclick="toggleDrawer('diff')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          <span id="branch-name">main</span>
+        </span>
+      </div>
+      <div class="topbar-right">
+        <button class="pill-badge" id="openin-btn" onclick="toggleOpenInMenu(event)" title="Open project in IDE / Terminal / Finder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          <span>Open</span>
+          <span style="font-size:10px;opacity:0.7">▾</span>
+        </button>
+        <button class="pill-badge" id="diff-toggle-btn" onclick="toggleDrawer('diff')" title="Review uncommitted git changes">
+          <span>Review</span>
+          <span class="diff-stat-add" id="top-diff-add">+0</span>
+          <span class="diff-stat-del" id="top-diff-del">-0</span>
+        </button>
+        <button class="pill-badge" onclick="toggleDrawer('files')" title="Browse workspace files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span>Files</span>
+        </button>
+        <button class="pill-badge" onclick="toggleDrawer('terminal')" title="Quick shell command">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span>Terminal</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Full Multi-Page Settings View (ChatGPT.app Settings) -->
+    <section id="settings-view">
+      <nav class="settings-nav">
+        <button class="settings-back-btn" onclick="closeSettingsView()">
+          <span>←</span> <span>Back to app</span>
+        </button>
+        <button class="settings-nav-btn active" data-sec="general" onclick="renderSettingsSection('general')">General</button>
+        <button class="settings-nav-btn" data-sec="appearance" onclick="renderSettingsSection('appearance')">Appearance</button>
+        <button class="settings-nav-btn" data-sec="configuration" onclick="renderSettingsSection('configuration')">Configuration</button>
+        <button class="settings-nav-btn" data-sec="personalization" onclick="renderSettingsSection('personalization')">Personalization</button>
+        <button class="settings-nav-btn" data-sec="mcp" onclick="renderSettingsSection('mcp')">MCP servers</button>
+        <button class="settings-nav-btn" data-sec="skills" onclick="renderSettingsSection('skills')">Skills &amp; Plugins</button>
+        <button class="settings-nav-btn" data-sec="git" onclick="renderSettingsSection('git')">Git &amp; Worktrees</button>
+        <button class="settings-nav-btn" data-sec="environments" onclick="renderSettingsSection('environments')">Projects &amp; Envs</button>
+        <button class="settings-nav-btn" data-sec="account" onclick="renderSettingsSection('account')">Account</button>
+      </nav>
+      <div class="settings-content" id="settings-body"></div>
+    </section>
+
+    <!-- Home Empty State (Exact OpenAI Blossom Emblem & Starter Cards) -->
+    <section id="home-hero">
+      <div class="codex-emblem">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3975.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/>
+        </svg>
+      </div>
+      <h1 class="hero-heading">What can I help you build?</h1>
+      <div class="hero-sub" onclick="toggleProjectPicker(event)" title="Choose project or create a new project">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span>On your computer · <strong id="hero-cwd-label">workspace</strong> ▾</span>
+      </div>
+
+      <div class="starter-grid">
+        <div class="starter-card" onclick="runPromptPreset('Review uncommitted git changes in this repository, summarize any bugs or risks, and suggest improvements.')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <div>
+            <div class="starter-card-title">Review uncommitted changes</div>
+            <div class="starter-card-desc">Inspect git diff and catch issues before commit</div>
+          </div>
+        </div>
+        <div class="starter-card" onclick="runPromptPreset('Explain the architecture and key modules of this repository.')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <div>
+            <div class="starter-card-title">Explain this codebase</div>
+            <div class="starter-card-desc">Map out entrypoints, data flow, and architecture</div>
+          </div>
+        </div>
+        <div class="starter-card" onclick="runPromptPreset('Search for potential bugs, edge cases, or failing tests in this project and fix them.')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          <div>
+            <div class="starter-card-title">Find and fix bugs</div>
+            <div class="starter-card-desc">Run diagnostics, locate root causes, and patch</div>
+          </div>
+        </div>
+        <div class="starter-card" onclick="runPromptPreset('Write comprehensive unit tests for the core modules and run the test suite to verify.')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          <div>
+            <div class="starter-card-title">Write &amp; run unit tests</div>
+            <div class="starter-card-desc">Add test coverage and verify with cargo/npm test</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Conversation Scroll Area -->
+    <div id="conversation-wrap" class="hidden">
+      <div id="messages"></div>
+    </div>
+
+    <!-- Bottom Rounded-Pill Composer (border-radius: 28px) -->
+    <div id="composer-host">
+      <div id="autocomplete-popover"></div>
+      <div class="composer-pill">
+        <div id="composer-chips"></div>
+        <textarea id="composer-input" rows="1" placeholder="Ask anything, @ to mention files, / for commands"></textarea>
+        <div class="composer-bar">
+          <div class="composer-controls-left">
+            <!-- + Attachment / File mention button -->
+            <button class="composer-chip-btn" onclick="triggerFileMention()" title="Mention a file (@)">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z"/></svg>
+            </button>
+            <!-- Workspace Folder / Project Picker Pill -->
+            <button class="composer-chip-btn" id="project-pill-btn" onclick="toggleProjectPicker(event)" title="Choose project or create new project">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 0 0 2 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0 0 18 15.25v-8.5A1.75 1.75 0 0 0 16.25 5h-4.836a.25.25 0 0 1-.177-.073L9.823 3.513A1.75 1.75 0 0 0 8.586 3H3.75Z"/></svg>
+              <span id="cwd-pill-text">project</span>
+              <span style="font-size:10px;opacity:0.65">▾</span>
+            </button>
+            <!-- Model Selector Pill -->
+            <button class="composer-chip-btn" id="model-pill-btn" onclick="toggleModelPicker(event)" title="Select model">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h6.572l-1.305 6.093a.75.75 0 0 0 1.292.657l8.5-9.5A.75.75 0 0 0 17.25 8h-6.572l1.305-6.093Z"/></svg>
+              <span id="model-pill-text">GPT-5.4</span>
+              <span id="fast-badge" style="display:none;color:var(--orange-400);font-size:10.5px;font-weight:600">⚡</span>
+              <span style="font-size:10px;opacity:0.65">▾</span>
+            </button>
+            <!-- Reasoning Effort Selector Pill -->
+            <button class="composer-chip-btn" id="effort-pill-btn" onclick="toggleEffortPicker(event)" title="Select thinking effort">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 2ZM10 15a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 15ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+              <span id="effort-pill-text">Medium</span>
+              <span style="font-size:10px;opacity:0.65">▾</span>
+            </button>
+            <!-- Sandbox Permission Shield Pill -->
+            <button class="composer-chip-btn sandbox-Write" id="sandbox-pill-btn" onclick="toggleSandboxPicker(event)" title="Select sandbox permission policy">
+              <span id="sandbox-pill-icon"></span>
+              <span id="sandbox-pill-text">Workspace write</span>
+              <span style="font-size:10px;opacity:0.65">▾</span>
+            </button>
+          </div>
+
+          <button class="composer-submit-btn" id="submit-btn" onclick="handleSubmitOrStop()" title="Send (Enter)">
+            <svg id="submit-icon-send" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 17a.75.75 0 0 1-.75-.75V5.612L5.29 9.77a.75.75 0 0 1-1.08-1.04l5.25-5.5a.75.75 0 0 1 1.08 0l5.25 5.5a.75.75 0 1 1-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0 1 10 17Z" clip-rule="evenodd"/></svg>
+            <svg id="submit-icon-stop" viewBox="0 0 20 20" fill="currentColor" style="display:none"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Right-Side Review / Diff / Files / Terminal Drawer -->
+  <aside id="inspector-drawer" class="closed">
+    <div class="drawer-hdr" onmousedown="maybeDragWindow(event)">
+      <div class="drawer-tabs">
+        <button class="drawer-tab active" id="tab-btn-diff" onclick="switchDrawerTab('diff')">Changes</button>
+        <button class="drawer-tab" id="tab-btn-files" onclick="switchDrawerTab('files')">Files</button>
+        <button class="drawer-tab" id="tab-btn-terminal" onclick="switchDrawerTab('terminal')">Terminal</button>
+      </div>
+      <button class="icon-btn" onclick="closeDrawer()" title="Close inspector">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-content"></div>
+  </aside>
+</div>
+
+<!-- Shared Floating Popover Menu -->
+<div id="floating-menu" class="floating-menu"></div>
+
+<!-- Modal Backdrop -->
+<div id="modal-backdrop" onclick="if(event.target===this)closeModal()">
+  <div class="modal-card">
+    <div class="modal-hdr">
+      <span id="modal-title">Settings</span>
+      <button class="icon-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+<script>
+// Exact SVG icons for sandbox states from ChatGPT.app
+const SANDBOX_ICONS = {
+  "read-only": `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>`,
+  "workspace-write": `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9.661 2.237a.531.531 0 0 1 .678 0 11.947 11.947 0 0 0 7.078 2.749.5.5 0 0 1 .479.425c.069.52.104 1.05.104 1.59 0 5.162-3.26 9.563-7.834 11.256a.48.48 0 0 1-.332 0C5.26 16.564 2 12.163 2 7c0-.538.035-1.069.104-1.589a.5.5 0 0 1 .48-.425 11.947 11.947 0 0 0 7.077-2.749Zm4.196 5.954a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd"/></svg>`,
+  "danger-full-access": `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>`
+};
+const SANDBOX_LABELS = {
+  "read-only": "Read-only",
+  "workspace-write": "Workspace write",
+  "danger-full-access": "Full access"
+};
+const SANDBOX_ORDER = ["workspace-write", "read-only", "danger-full-access"];
+const EFFORT_LABELS = {
+  "low": "Light",
+  "medium": "Medium",
+  "high": "High",
+  "xhigh": "Extra High",
+  "persistent": "Persistent"
+};
+
+let nextRpcId = 1;
+const pendingRpc = new Map();
+let currentThread = null;
+let currentTurn = null;
+let isTurnActive = false;
+let currentCwd = "";
+let currentModel = "gpt-5.4";
+let modelCatalog = [];
+let projectsList = [];
+let openInApps = [];
+let currentEffort = "medium";
+let fastMode = false;
+let currentSandbox = "workspace-write";
+let mentionedFiles = [];
+let drawerOpen = false;
+let currentDrawerTab = "diff";
+let latestGitStatus = null;
+let activeFloatingMenuKey = null;
+const itemEls = new Map();
+const itemTexts = new Map();
+
+function rpcSend(obj) {
+  window.ipc.postMessage(JSON.stringify(obj));
+}
+function rpcCall(method, params = {}) {
+  const id = nextRpcId++;
+  rpcSend({ id, method, params });
+  return new Promise((resolve, reject) => pendingRpc.set(id, { resolve, reject }));
+}
+
+function maybeDragWindow(e) {
+  if (e.target.closest("button, input, textarea, select, a, .pill-badge, .drawer-tab")) return;
+  if (e.button === 0) rpcSend({ __window: "drag" });
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function baseName(p) {
+  if (!p) return "workspace";
+  const parts = p.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || p;
+}
+
+// Extract leading **Heading** from reasoning summary text (exact _E(content) logic from ChatGPT.app)
+function parseReasoningHeading(raw) {
+  const s = String(raw || "").trim();
+  const m = s.match(/^\*\*([^*\n]+)\*\*(?:\r?\n)+([\s\S]*)$/);
+  if (m) {
+    return { heading: m[1].trim(), body: m[2].trim() };
+  }
+  const mSingle = s.match(/^\*\*([^*\n]+)\*\*$/);
+  if (mSingle) {
+    return { heading: mSingle[1].trim(), body: "" };
+  }
+  return { heading: "", body: s };
+}
+
+function cleanShellCmd(raw) {
+  let s = String(raw || "").trim();
+  for (const p of ["/bin/zsh -lc ", "/bin/bash -lc ", "zsh -lc ", "bash -lc ", "sh -lc ", "/bin/sh -lc "]) {
+    if (s.startsWith(p)) {
+      s = s.slice(p.length).trim();
+      if ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"'))) {
+        s = s.slice(1, -1);
+      }
+      break;
+    }
+  }
+  return s;
+}
+
+function formatDurationMs(ms) {
+  if (!ms || ms < 200) return "";
+  if (ms < 1000) return `${ms}ms`;
+  const sec = (ms / 1000);
+  if (sec < 60) return `${sec >= 10 ? Math.round(sec) : sec.toFixed(1).replace(/\.0$/, "")}s`;
+  const m = Math.floor(sec / 60);
+  const rem = Math.round(sec % 60);
+  return `${m}m ${rem}s`;
+}
+
+// Markdown renderer matching ChatGPT.app typography, tables, blockquotes, lists & code blocks
+function renderMarkdown(md) {
+  if (!md) return "";
+  const blocks = [];
+  let text = String(md).replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const idx = blocks.length;
+    const clean = escapeHtml(code.replace(/\n$/, ""));
+    const l = escapeHtml(lang || "text");
+    blocks.push(`<div class="code-block-wrap"><div class="code-block-hdr"><span>${l}</span><button class="code-copy-btn" onclick="copyCodeBlock(this)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button></div><pre class="code-block-pre"><code>${clean}</code></pre></div>`);
+    return `\x00CODEBLOCK_${idx}\x00`;
+  });
+  text = escapeHtml(text);
+  // Inline code, bold, italic, links
+  text = text.replace(/`([^`\n]+)`/g, `<code class="inline-code">$1</code>`);
+  text = text.replace(/\*\*([^*]+)\*\*/g, `<strong>$1</strong>`);
+  text = text.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, `$1<em>$2</em>`);
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
+    if (href.startsWith("/") || href.startsWith("file://")) {
+      const fpath = href.replace(/^file:\/\//, "").replace(/#L\d+.*$/, "");
+      return `<a href="javascript:void(0)" class="tool-file-link" onclick="openFileInDrawer('${escapeHtml(fpath)}')">${label}</a>`;
+    }
+    return `<a href="${href}" target="_blank" rel="noopener" style="color:var(--blue-300)">${label}</a>`;
+  });
+
+  const paras = text.split(/\n{2,}/).map(p => {
+    const trimmed = p.trim();
+    if (!trimmed) return "";
+    if (trimmed.includes("\x00CODEBLOCK_") && /^(\x00CODEBLOCK_\d+\x00\s*)+$/.test(trimmed)) return trimmed;
+    if (/^#{1,4} /.test(trimmed) && !trimmed.includes("\n")) {
+      const m = trimmed.match(/^(#{1,4}) (.+)$/);
+      if (m) return `<h${m[1].length}>${m[2]}</h${m[1].length}>`;
+    }
+    if (/^(-{3,}|\*{3,})$/.test(trimmed)) return `<hr/>`;
+    const lines = trimmed.split("\n");
+    // GFM Table
+    if (lines.length >= 2 && lines[0].includes("|") && /^\s*\|?[\s:-]+\|[\s|:-]*$/.test(lines[1])) {
+      const parseRow = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const headers = parseRow(lines[0]);
+      const rows = lines.slice(2).map(parseRow);
+      return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    }
+    // Blockquote
+    if (lines.every(l => /^(&gt;|>)\s?/.test(l))) {
+      return `<blockquote>${lines.map(l => l.replace(/^(&gt;|>)\s?/, "")).join("<br/>")}</blockquote>`;
+    }
+    // Unordered list
+    if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
+      return `<ul>` + lines.map(l => `<li>${l.replace(/^\s*[-*]\s+/, "")}</li>`).join("") + `</ul>`;
+    }
+    // Ordered list
+    if (lines.every(l => /^\s*\d+\.\s+/.test(l))) {
+      return `<ol>` + lines.map(l => `<li>${l.replace(/^\s*\d+\.\s+/, "")}</li>`).join("") + `</ol>`;
+    }
+    // Mixed headings inside paragraph
+    let block = trimmed
+      .replace(/^#### (.+)$/gm, `<h4>$1</h4>`)
+      .replace(/^### (.+)$/gm, `<h3>$1</h3>`)
+      .replace(/^## (.+)$/gm, `<h2>$1</h2>`)
+      .replace(/^# (.+)$/gm, `<h1>$1</h1>`);
+    if (block.startsWith("<h") || block.includes("\x00CODEBLOCK_")) return block;
+    return `<p>${block.replace(/\n/g, "<br/>")}</p>`;
+  });
+  let out = paras.filter(Boolean).join("\n");
+  out = out.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, i) => blocks[Number(i)] || "");
+  return out;
+}
+
+window.copyCodeBlock = function(btn) {
+  const code = btn.closest(".code-block-wrap")?.querySelector("code")?.innerText || "";
+  navigator.clipboard?.writeText(code);
+  const span = btn.querySelector("span") || btn;
+  span.textContent = "Copied";
+  setTimeout(() => { span.textContent = "Copy"; }, 1400);
+};
+
+window.copyRawText = function(btn, text) {
+  navigator.clipboard?.writeText(text || "");
+  const orig = btn.innerHTML;
+  btn.innerHTML = `<svg viewBox="0 0 20 20" fill="currentColor" style="color:#3ddc84"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd"/></svg>`;
+  setTimeout(() => { btn.innerHTML = orig; }, 1400);
+};
+
+function computeDiffStats(diffText) {
+  let added = 0, deleted = 0;
+  for (const line of String(diffText || "").split(/\r?\n/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added++;
+    else if (line.startsWith("-")) deleted++;
+  }
+  return { added, deleted };
+}
+
+function renderColoredDiff(diffText) {
+  return String(diffText || "").split(/\r?\n/).map(line => {
+    const esc = escapeHtml(line);
+    if (line.startsWith("@@")) return `<span class="diff-line-hunk">${esc}</span>`;
+    if (line.startsWith("+") && !line.startsWith("+++")) return `<span class="diff-line-add">${esc}</span>`;
+    if (line.startsWith("-") && !line.startsWith("---")) return `<span class="diff-line-del">${esc}</span>`;
+    return `<span class="diff-line-ctx">${esc}</span>`;
+  }).join("");
+}
+
+function setViewMode(hasMessages) {
+  const hero = document.getElementById("home-hero");
+  const conv = document.getElementById("conversation-wrap");
+  const topbar = document.getElementById("topbar");
+  if (hasMessages) {
+    hero.classList.add("hidden");
+    conv.classList.remove("hidden");
+    topbar.classList.add("with-border");
+  } else {
+    hero.classList.remove("hidden");
+    conv.classList.add("hidden");
+    topbar.classList.remove("with-border");
+  }
+}
+
+function setTurnStatus(active) {
+  isTurnActive = active;
+  const btn = document.getElementById("submit-btn");
+  const sendIcon = document.getElementById("submit-icon-send");
+  const stopIcon = document.getElementById("submit-icon-stop");
+  if (active) {
+    btn.classList.add("stop");
+    btn.title = "Stop turn";
+    sendIcon.style.display = "none";
+    stopIcon.style.display = "block";
+  } else {
+    btn.classList.remove("stop");
+    btn.title = "Send (Enter)";
+    sendIcon.style.display = "block";
+    stopIcon.style.display = "none";
+  }
+}
+
+function updateSandboxUI() {
+  const btn = document.getElementById("sandbox-pill-btn");
+  document.getElementById("sandbox-pill-icon").innerHTML = SANDBOX_ICONS[currentSandbox] || SANDBOX_ICONS["workspace-write"];
+  document.getElementById("sandbox-pill-text").textContent = SANDBOX_LABELS[currentSandbox] || currentSandbox;
+  btn.className = "composer-chip-btn " + (currentSandbox === "danger-full-access" ? "sandbox-warn" : currentSandbox === "workspace-write" ? "sandbox-Write" : "");
+}
+
+function updateCwdUI(cwd) {
+  currentCwd = cwd || currentCwd;
+  const label = baseName(currentCwd);
+  document.getElementById("cwd-pill-text").textContent = label;
+  document.getElementById("hero-cwd-label").textContent = label;
+  refreshGitStatus();
+}
+
+async function refreshGitStatus() {
+  try {
+    const st = await rpcCall("workspace/gitStatus", { cwd: currentCwd || undefined });
+    latestGitStatus = st;
+    const bBadge = document.getElementById("branch-badge");
+    if (st.branch) {
+      bBadge.style.display = "inline-flex";
+      document.getElementById("branch-name").textContent = st.branch;
+    } else {
+      bBadge.style.display = "none";
+    }
+    document.getElementById("top-diff-add").textContent = `+${st.totalAdded || 0}`;
+    document.getElementById("top-diff-del").textContent = `-${st.totalDeleted || 0}`;
+    if (drawerOpen && currentDrawerTab === "diff") renderDrawerContent();
+  } catch (_) {}
+}
+window.__onServerMessage = function(msg) {
+  if (msg.id !== undefined && msg.method === undefined) {
+    const p = pendingRpc.get(msg.id);
+    if (p) {
+      pendingRpc.delete(msg.id);
+      msg.error ? p.reject(msg.error) : p.resolve(msg.result);
+    }
+    return;
+  }
+  if (msg.id !== undefined && msg.method !== undefined) {
+    renderApprovalCard(msg.id, msg.method, msg.params || {});
+    return;
+  }
+  handleServerNotification(msg.method, msg.params || {});
+};
+
+let activeTurnBlock = null;
+let activeTurnStartMs = 0;
+
+function ensureTurnBlock(forceNew = false) {
+  const box = document.getElementById("messages");
+  if (!activeTurnBlock || forceNew) {
+    const tb = document.createElement("div");
+    tb.className = "turn-block";
+    tb.innerHTML = `<div class="turn-user-slot"></div>
+      <div class="turn-activity-wrap empty">
+        <div class="turn-activity-list"></div>
+        <div class="turn-worked-row">
+          <button class="turn-worked-btn" type="button">
+            <span class="turn-worked-label">Worked</span>
+            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>
+          </button>
+          <div class="turn-worked-line"></div>
+        </div>
+      </div>
+      <div class="turn-assistant-slot"></div>`;
+    const actWrap = tb.querySelector(".turn-activity-wrap");
+    tb.querySelector(".turn-worked-btn").onclick = () => actWrap.classList.toggle("collapsed-steps");
+    box.appendChild(tb);
+    activeTurnBlock = tb;
+    activeTurnStartMs = Date.now();
+  }
+  return activeTurnBlock;
+}
+
+function finalizeTurnWorkedDivider(tb, durationMs) {
+  if (!tb) return;
+  const wrap = tb.querySelector(".turn-activity-wrap");
+  const list = tb.querySelector(".turn-activity-list");
+  const row = tb.querySelector(".turn-worked-row");
+  const label = tb.querySelector(".turn-worked-label");
+  if (!wrap || !list || !row || list.children.length === 0) return;
+  const dur = formatDurationMs(durationMs || (Date.now() - activeTurnStartMs));
+  label.textContent = dur ? `Worked for ${dur}` : `Worked`;
+  row.classList.add("visible");
+}
+
+function handleServerNotification(method, p) {
+  if (method === "thread/started" || method === "thread/name/updated" || method === "thread/deleted" || method === "thread/archived") {
+    refreshThreads();
+  } else if (method === "thread/status/changed") {
+    if (p.threadId === currentThread) setTurnStatus(p.status?.type === "active");
+    refreshThreads();
+  } else if (method === "turn/started") {
+    if (p.threadId === currentThread) {
+      currentTurn = p.turn?.id || null;
+      activeTurnStartMs = Date.now();
+      setTurnStatus(true);
+    }
+  } else if (method === "turn/completed") {
+    if (p.threadId === currentThread) {
+      finalizeTurnWorkedDivider(activeTurnBlock, p.turn?.durationMs);
+      currentTurn = null;
+      setTurnStatus(false);
+      refreshGitStatus();
+      refreshThreads();
+    }
+  } else if (method === "item/started" || method === "item/completed") {
+    if (p.threadId === currentThread && p.item) upsertTimelineItem(p.item);
+  } else if (method === "item/reasoning/summaryTextDelta") {
+    if (p.threadId === currentThread) {
+      const prev = (itemTexts.get(p.itemId) || "") + (p.delta || "");
+      itemTexts.set(p.itemId, prev);
+      updateReasoningDom(p.itemId, prev, true, null);
+      scrollBottom();
+    }
+  } else if (method === "item/agentMessage/delta") {
+    if (p.threadId === currentThread) {
+      const prev = (itemTexts.get(p.itemId) || "") + (p.delta || "");
+      itemTexts.set(p.itemId, prev);
+      const el = itemEls.get(p.itemId);
+      if (el) {
+        el.innerHTML = renderMarkdown(prev);
+        scrollBottom();
+      }
+    }
+  } else if (method === "item/commandExecution/outputDelta") {
+    if (p.threadId === currentThread) {
+      const bodyEl = itemEls.get(p.itemId + ":body");
+      if (bodyEl) {
+        bodyEl.textContent += (p.delta || "");
+        scrollBottom();
+      }
+    }
+  } else if (method === "error") {
+    appendErrorBanner(p.error?.message || "Turn error");
+  }
+}
+
+function scrollBottom() {
+  const wrap = document.getElementById("conversation-wrap");
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function clearTimeline() {
+  document.getElementById("messages").innerHTML = "";
+  itemEls.clear();
+  itemTexts.clear();
+  activeTurnBlock = null;
+  setViewMode(false);
+}
+
+const CHEV_SVG = `<svg class="tool-inline-chev" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
+const ICONS = {
+  thinking: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 2ZM10 15a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 10 15ZM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM15.657 5.404a.75.75 0 1 0-1.06-1.06l-1.061 1.06a.75.75 0 0 0 1.06 1.06l1.06-1.06ZM6.464 14.596a.75.75 0 1 0-1.06-1.06l-1.06 1.06a.75.75 0 0 0 1.06 1.06l1.06-1.06ZM18 10a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 18 10ZM5 10a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 5 10ZM14.596 15.657a.75.75 0 0 0 1.06-1.06l-1.06-1.061a.75.75 0 1 0-1.06 1.06l1.06 1.06ZM5.404 6.464a.75.75 0 0 0 1.06-1.06l-1.06-1.06a.75.75 0 1 0-1.061 1.06l1.06 1.06Z"/></svg>`,
+  read: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 16.82A7.462 7.462 0 0 1 15 15.5c.71 0 1.396.098 2.046.282A.75.75 0 0 0 18 15.06v-11a.75.75 0 0 0-.546-.721A9.006 9.006 0 0 0 15 3a8.963 8.963 0 0 0-4.25 1.065V16.82ZM9.25 4.065A8.963 8.963 0 0 0 5 3c-.85 0-1.673.118-2.454.339A.75.75 0 0 0 2 4.06v11a.75.75 0 0 0 .954.721A7.506 7.506 0 0 1 5 15.5c1.579 0 3.042.487 4.25 1.32V4.065Z"/></svg>`,
+  search: `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd"/></svg>`,
+  list: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 0 0 2 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0 0 18 15.25v-8.5A1.75 1.75 0 0 0 16.25 5h-4.836a.25.25 0 0 1-.177-.073L9.823 3.513A1.75 1.75 0 0 0 8.586 3H3.75Z"/></svg>`,
+  term: `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.25 3A2.25 2.25 0 0 0 1 5.25v9.5A2.25 2.25 0 0 0 3.25 17h13.5A2.25 2.25 0 0 0 19 14.75v-9.5A2.25 2.25 0 0 0 16.75 3H3.25Zm.943 8.752a.75.75 0 0 1 .055-1.06L6.128 9l-1.88-1.693a.75.75 0 1 1 1.004-1.114l2.5 2.25a.75.75 0 0 1 0 1.114l-2.5 2.25a.75.75 0 0 1-1.06-.055ZM9.75 10.25a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 0-1.5h-2.5Z" clip-rule="evenodd"/></svg>`,
+  diff: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M5.433 13.917l1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z"/></svg>`,
+  copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`
+};
+
+function updateReasoningDom(id, rawText, streaming, durationMs) {
+  const wrap = itemEls.get(id);
+  const hdr = itemEls.get(id + ":hdr");
+  const body = itemEls.get(id + ":body");
+  if (!wrap || !hdr || !body) return;
+  const { heading, body: content } = parseReasoningHeading(rawText);
+  wrap.classList.toggle("streaming", !!streaming);
+  const dur = formatDurationMs(durationMs);
+  if (streaming) {
+    const label = heading || "Thinking";
+    hdr.innerHTML = `<span class="reasoning-icon">${ICONS.thinking}</span><span class="shimmer-text">${escapeHtml(label)}</span>`;
+  } else {
+    const thoughtPrefix = dur ? `Thought for ${dur}` : `Thought`;
+    const titleText = heading ? `${thoughtPrefix} · ${heading}` : thoughtPrefix;
+    hdr.innerHTML = `<span class="reasoning-icon">${ICONS.thinking}</span><span>${escapeHtml(titleText)}</span><svg class="reasoning-chev" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
+  }
+  body.innerHTML = renderMarkdown(content || rawText);
+  if (streaming) body.scrollTop = body.scrollHeight;
+}
+
+window.openFileInDrawer = async function(path) {
+  if (!path) return;
+  drawerOpen = true;
+  currentDrawerTab = "files";
+  document.getElementById("inspector-drawer").classList.remove("closed");
+  document.querySelectorAll(".drawer-tab").forEach(b => b.classList.toggle("active", b.id === "tab-btn-files"));
+  await renderDrawerContent();
+  if (typeof previewFile === "function") previewFile(path);
+};
+
+window.editUserPrompt = function(text) {
+  const inp = document.getElementById("composer-input");
+  inp.value = text || "";
+  autoResizeInput();
+  inp.focus();
+};
+
+function upsertTimelineItem(item) {
+  setViewMode(true);
+  if (item.type === "userMessage") {
+    let grp = itemEls.get(item.id);
+    const text = (item.content || []).map(c => c.text || "").join("");
+    if (!grp) {
+      const tb = ensureTurnBlock(true);
+      const slot = tb.querySelector(".turn-user-slot");
+      grp = document.createElement("div");
+      grp.className = "msg-user-group";
+      const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      grp.innerHTML = `<div class="msg-user-bubble"></div>
+        <div class="msg-user-meta">
+          <span>${nowStr}</span>
+          <button class="msg-action-btn" title="Copy message" data-act="copy">${ICONS.copy}</button>
+          <button class="msg-action-btn" title="Edit prompt" data-act="edit">${ICONS.edit}</button>
+        </div>`;
+      slot.appendChild(grp);
+      itemEls.set(item.id, grp);
+    }
+    grp.querySelector(".msg-user-bubble").textContent = text;
+    grp.querySelector('[data-act="copy"]').onclick = function() { copyRawText(this, text); };
+    grp.querySelector('[data-act="edit"]').onclick = function() { editUserPrompt(text); };
+    if (document.getElementById("topbar-title").textContent === "New thread" && text) {
+      document.getElementById("topbar-title").textContent = text.slice(0, 48);
+    }
+  } else if (item.type === "reasoning") {
+    const tb = ensureTurnBlock(false);
+    const actWrap = tb.querySelector(".turn-activity-wrap");
+    const actList = tb.querySelector(".turn-activity-list");
+    actWrap.classList.remove("empty");
+    let wrap = itemEls.get(item.id);
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "reasoning-item";
+      const hdr = document.createElement("button");
+      hdr.className = "reasoning-hdr";
+      hdr.onclick = () => wrap.classList.toggle("open");
+      const body = document.createElement("div");
+      body.className = "reasoning-body";
+      wrap.appendChild(hdr);
+      wrap.appendChild(body);
+      actList.appendChild(wrap);
+      itemEls.set(item.id, wrap);
+      itemEls.set(item.id + ":hdr", hdr);
+      itemEls.set(item.id + ":body", body);
+    }
+    const raw = item.text || (item.summary || []).join("\n\n") || itemTexts.get(item.id) || "";
+    itemTexts.set(item.id, raw);
+    updateReasoningDom(item.id, raw, item.status === "inProgress", item.durationMs);
+  } else if (item.type === "agentMessage") {
+    const tb = ensureTurnBlock(false);
+    const isCommentary = item.phase === "commentary";
+    let el = itemEls.get(item.id);
+    if (!el) {
+      if (isCommentary) {
+        const actWrap = tb.querySelector(".turn-activity-wrap");
+        const actList = tb.querySelector(".turn-activity-list");
+        actWrap.classList.remove("empty");
+        el = document.createElement("div");
+        el.className = "msg-commentary";
+        actList.appendChild(el);
+      } else {
+        finalizeTurnWorkedDivider(tb, null);
+        const slot = tb.querySelector(".turn-assistant-slot");
+        const wrap = document.createElement("div");
+        wrap.className = "msg-agent-wrap";
+        el = document.createElement("div");
+        el.className = "msg-agent";
+        const actions = document.createElement("div");
+        actions.className = "msg-agent-actions";
+        actions.innerHTML = `<button class="msg-action-btn" title="Copy response" data-act="copy">${ICONS.copy}<span>Copy</span></button>`;
+        actions.querySelector('[data-act="copy"]').onclick = function() {
+          copyRawText(this, itemTexts.get(item.id) || el.innerText || "");
+        };
+        wrap.appendChild(el);
+        wrap.appendChild(actions);
+        slot.appendChild(wrap);
+      }
+      itemEls.set(item.id, el);
+    }
+    if (item.text) {
+      itemTexts.set(item.id, item.text);
+      el.innerHTML = renderMarkdown(item.text);
+    }
+  } else if (item.type === "commandExecution" || item.type === "fileChange" || item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
+    const tb = ensureTurnBlock(false);
+    const actWrap = tb.querySelector(".turn-activity-wrap");
+    const actList = tb.querySelector(".turn-activity-list");
+    actWrap.classList.remove("empty");
+
+    let row = itemEls.get(item.id);
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "tool-inline-item";
+      const hdr = document.createElement("div");
+      hdr.className = "tool-inline-hdr";
+      hdr.onclick = () => row.classList.toggle("open");
+      const drawer = document.createElement("div");
+      drawer.className = item.type === "fileChange" ? "tool-diff-card" : "tool-term-box";
+      row.appendChild(hdr);
+      row.appendChild(drawer);
+      actList.appendChild(row);
+      itemEls.set(item.id, row);
+      itemEls.set(item.id + ":hdr", hdr);
+      itemEls.set(item.id + ":drawer", drawer);
+    }
+    const hdr = itemEls.get(item.id + ":hdr");
+    const drawer = itemEls.get(item.id + ":drawer");
+    const running = item.status === "inProgress";
+    const durStr = formatDurationMs(item.durationMs);
+
+    if (item.type === "commandExecution") {
+      const actions = item.commandActions || [];
+      const firstAct = actions[0] || { type: "unknown", cmd: item.command || "" };
+      const cleanCmd = cleanShellCmd(item.command || "");
+      let iconSvg = ICONS.term;
+      let labelHtml = "";
+
+      if (actions.length > 0 && actions.every(a => a.type === "read")) {
+        iconSvg = ICONS.read;
+        const verb = running ? "Reading" : "Read";
+        const filesHtml = actions.map(a => {
+          const fname = escapeHtml(a.name || baseName(a.path || ""));
+          const fpath = escapeHtml(a.path || a.name || "");
+          return `<span class="tool-file-link" onclick="event.stopPropagation();openFileInDrawer('${fpath}')" title="${fpath}">${fname}</span>`;
+        }).join(", ");
+        labelHtml = `<span class="tool-verb ${running ? "shimmer-text" : ""}">${verb}</span><span class="tool-target">${filesHtml}</span>`;
+      } else if (firstAct.type === "search") {
+        iconSvg = ICONS.search;
+        const verb = running ? "Searching" : "Searched";
+        const q = escapeHtml(firstAct.query || cleanCmd);
+        const p = firstAct.path ? ` in <span class="tool-file-link">${escapeHtml(firstAct.path)}</span>` : "";
+        labelHtml = `<span class="tool-verb ${running ? "shimmer-text" : ""}">${verb}</span><span class="tool-target">for <code class="tool-pill-code">${q}</code>${p}</span>`;
+      } else if (firstAct.type === "list_files") {
+        iconSvg = ICONS.list;
+        const verb = running ? "Listing" : "Listed";
+        const p = firstAct.path ? ` in <span class="tool-file-link">${escapeHtml(firstAct.path)}</span>` : "";
+        labelHtml = `<span class="tool-verb ${running ? "shimmer-text" : ""}">${verb}</span><span class="tool-target">files${p}</span>`;
+      } else {
+        iconSvg = ICONS.term;
+        const verb = running ? "Running" : item.status === "failed" ? "Failed" : item.status === "declined" ? "Stopped" : "Ran";
+        const durSuffix = (!running && durStr) ? `<span class="tool-meta-badge">in ${durStr}</span>` : "";
+        const exitBadge = (!running && item.exitCode && item.exitCode !== 0) ? `<span class="tool-meta-badge failed">(exit ${item.exitCode})</span>` : "";
+        labelHtml = `<span class="tool-verb ${running ? "shimmer-text" : ""}">${verb}</span><span class="tool-target mono">${escapeHtml(cleanCmd)}</span>${durSuffix}${exitBadge}`;
+      }
+
+      hdr.innerHTML = `<span class="tool-inline-icon">${iconSvg}</span>${labelHtml}${CHEV_SVG}`;
+      let pre = itemEls.get(item.id + ":body");
+      if (!pre) {
+        drawer.innerHTML = `<div class="tool-term-hdr"><span class="tool-term-cmd">$ ${escapeHtml(cleanCmd)}</span><button class="code-copy-btn" data-copy="1">Copy</button></div><pre class="tool-term-pre"></pre>`;
+        pre = drawer.querySelector(".tool-term-pre");
+        drawer.querySelector('[data-copy="1"]').onclick = function(e) {
+          e.stopPropagation();
+          copyRawText(this, pre.textContent || "");
+        };
+        itemEls.set(item.id + ":body", pre);
+      }
+      if (item.aggregatedOutput !== null && item.aggregatedOutput !== undefined) {
+        pre.textContent = item.aggregatedOutput || "(no output)";
+      }
+    } else if (item.type === "fileChange") {
+      const changes = item.changes || [];
+      const first = changes[0] || {};
+      const allDiff = changes.map(c => c.diff || "").join("\n");
+      const stats = computeDiffStats(allDiff);
+      const action = first.kind?.type === "add" ? "Created" : first.kind?.type === "delete" ? "Deleted" : "Edited";
+      const fileLabel = changes.map(c => c.path).join(", ") || "files";
+      const fpath = escapeHtml(first.path || fileLabel);
+      hdr.innerHTML = `<span class="tool-inline-icon">${ICONS.diff}</span>
+        <span class="tool-verb ${running ? "shimmer-text" : ""}">${action}</span>
+        <span class="tool-target mono tool-file-link" onclick="event.stopPropagation();openFileInDrawer('${fpath}')">${escapeHtml(fileLabel)}</span>
+        <span class="diff-stat-add">+${stats.added}</span>
+        <span class="diff-stat-del">-${stats.deleted}</span>
+        ${CHEV_SVG}`;
+      drawer.innerHTML = `<div class="tool-diff-hdr">
+          <div class="tool-diff-hdr-left">
+            <span class="tool-file-link" onclick="openFileInDrawer('${fpath}')">${escapeHtml(fileLabel)}</span>
+            <span class="diff-stat-add">+${stats.added}</span>
+            <span class="diff-stat-del">-${stats.deleted}</span>
+          </div>
+          <button class="code-copy-btn" data-copy-diff="1">Copy diff</button>
+        </div>
+        <div class="tool-diff-body">${renderColoredDiff(allDiff)}</div>`;
+      drawer.querySelector('[data-copy-diff="1"]').onclick = function(e) {
+        e.stopPropagation();
+        copyRawText(this, allDiff);
+      };
+    } else {
+      const label = item.type === "mcpToolCall" ? `${item.server} · ${item.tool}` : (item.tool || "tool");
+      const verb = running ? "Calling" : "Called";
+      hdr.innerHTML = `<span class="tool-inline-icon">${ICONS.term}</span><span class="tool-verb ${running ? "shimmer-text" : ""}">${verb}</span><span class="tool-target mono">${escapeHtml(label)}</span>${CHEV_SVG}`;
+      const out = item.result?.content?.map(c => c.text).join("\n") || (item.contentItems || []).map(c => c.text).join("\n") || JSON.stringify(item.arguments || {}, null, 2);
+      drawer.innerHTML = `<pre class="tool-term-pre">${escapeHtml(out)}</pre>`;
+    }
+  }
+  scrollBottom();
+}
+
+function renderApprovalCard(reqId, method, p) {
+  setViewMode(true);
+  const box = document.getElementById("messages");
+  const card = document.createElement("div");
+  card.className = "approval-card";
+  const isPatch = method.includes("fileChange");
+  const title = isPatch ? "Allow Codex to edit files?" : "Allow Codex to run command?";
+  const detail = p.command || `Workspace: ${p.cwd || currentCwd}`;
+  card.innerHTML = `<div class="approval-hdr">${SANDBOX_ICONS["danger-full-access"]} <span>${title}</span></div>
+    <div class="approval-cmd">${escapeHtml(detail)}</div>
+    <div class="approval-actions">
+      <button class="btn-pill danger" data-dec="decline">Deny</button>
+      <button class="btn-pill" data-dec="acceptForSession">Allow this conversation</button>
+      <button class="btn-pill primary" data-dec="accept">Allow once</button>
+    </div>`;
+  card.querySelectorAll("button[data-dec]").forEach(btn => {
+    btn.onclick = () => {
+      rpcSend({ id: reqId, result: { decision: btn.getAttribute("data-dec") } });
+      card.remove();
+    };
+  });
+  box.appendChild(card);
+  scrollBottom();
+}
+
+function appendErrorBanner(msg) {
+  setViewMode(true);
+  const box = document.getElementById("messages");
+  const d = document.createElement("div");
+  d.className = "approval-card";
+  d.innerHTML = `<div class="approval-hdr" style="color:var(--red-400)">Error</div><div style="font-size:13px">${escapeHtml(msg)}</div>`;
+  box.appendChild(d);
+  scrollBottom();
+}
+const CHECK_SVG = `<svg class="menu-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd"/></svg>`;
+const FOLDER_SVG = `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 3A1.75 1.75 0 0 0 2 4.75v10.5c0 .966.784 1.75 1.75 1.75h12.5A1.75 1.75 0 0 0 18 15.25v-8.5A1.75 1.75 0 0 0 16.25 5h-4.836a.25.25 0 0 1-.177-.073L9.823 3.513A1.75 1.75 0 0 0 8.586 3H3.75Z"/></svg>`;
+
+function updateModelAndEffortUI() {
+  const mObj = modelCatalog.find(m => m.model === currentModel);
+  document.getElementById("model-pill-text").textContent = mObj ? (mObj.displayName || mObj.model) : currentModel;
+  document.getElementById("effort-pill-text").textContent = EFFORT_LABELS[currentEffort] || currentEffort;
+  const fb = document.getElementById("fast-badge");
+  if (fb) fb.style.display = fastMode ? "inline" : "none";
+}
+
+async function refreshProjects() {
+  try {
+    const r = await rpcCall("projects/list", {});
+    projectsList = r.projects || [];
+  } catch (_) {}
+}
+
+async function refreshThreads() {
+  await refreshProjects();
+  const search = document.getElementById("thread-search")?.value?.trim() || "";
+  const r = await rpcCall("thread/list", { limit: 80, searchTerm: search || undefined });
+  const list = r.data || [];
+  document.getElementById("thread-count").textContent = list.length ? String(list.length) : "";
+  const wrap = document.getElementById("thread-list");
+  wrap.innerHTML = "";
+
+  // Group threads by project folder + include all registered projects from ~/.codex/.codex-global-state.json
+  const groups = new Map();
+  for (const p of projectsList) {
+    if (p.path) groups.set(p.path, []);
+  }
+  for (const t of list) {
+    const key = t.cwd || "Workspace";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+
+  for (const [cwdPath, items] of groups.entries()) {
+    const projMeta = projectsList.find(p => p.path === cwdPath);
+    const label = projMeta?.label || baseName(cwdPath);
+    const grp = document.createElement("div");
+    grp.className = "project-group";
+    const hdr = document.createElement("div");
+    hdr.className = "project-hdr";
+    hdr.title = cwdPath;
+    hdr.innerHTML = `${FOLDER_SVG}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(label)}</span>
+      <button class="thread-act-btn" title="New thread in project" data-proj-new="1">+</button>`;
+    hdr.onclick = (e) => {
+      closeSettingsView();
+      updateCwdUI(cwdPath);
+      newThread();
+    };
+    grp.appendChild(hdr);
+
+    for (const t of items) {
+      const row = document.createElement("div");
+      row.className = "thread-row" + (t.id === currentThread ? " active" : "");
+      const title = t.name || t.preview || ("Thread " + t.id.slice(-6));
+      const isAct = t.status?.type === "active";
+      row.innerHTML = `${isAct ? `<span class="thread-status-dot"></span>` : ``}
+        <span class="thread-title">${escapeHtml(title)}</span>
+        <span class="thread-actions">
+          <button class="thread-act-btn" title="Rename thread" data-act="rename">✎</button>
+          <button class="thread-act-btn" title="Delete thread" data-act="delete">✕</button>
+        </span>`;
+      row.onclick = (e) => {
+        const act = e.target.closest("button[data-act]")?.getAttribute("data-act");
+        if (act === "rename") {
+          e.stopPropagation();
+          promptRenameThread(t.id, title);
+        } else if (act === "delete") {
+          e.stopPropagation();
+          deleteThread(t.id);
+        } else {
+          closeSettingsView();
+          openThread(t.id);
+        }
+      };
+      grp.appendChild(row);
+    }
+    wrap.appendChild(grp);
+  }
+}
+
+async function newThread() {
+  const r = await rpcCall("thread/start", {
+    cwd: currentCwd || undefined,
+    model: currentModel,
+    reasoningEffort: currentEffort,
+    sandbox: currentSandbox
+  });
+  currentThread = r.thread.id;
+  updateCwdUI(r.cwd || currentCwd);
+  document.getElementById("topbar-title").textContent = "New thread";
+  document.getElementById("nav-home").classList.add("active");
+  clearTimeline();
+  setTurnStatus(false);
+  refreshThreads();
+  document.getElementById("composer-input").focus();
+}
+
+async function openThread(id) {
+  const r = await rpcCall("thread/resume", { threadId: id });
+  currentThread = r.thread.id;
+  updateCwdUI(r.cwd || currentCwd);
+  document.getElementById("nav-home").classList.remove("active");
+  clearTimeline();
+  const turns = r.thread.turns || [];
+  for (const turn of turns) {
+    activeTurnBlock = null;
+    const items = turn.items || [];
+    const totalDur = items.reduce((acc, it) => acc + (it.durationMs || 0), 0);
+    for (const item of items) upsertTimelineItem(item);
+    finalizeTurnWorkedDivider(activeTurnBlock, totalDur);
+  }
+  const title = r.thread.name || r.thread.preview || "Thread";
+  document.getElementById("topbar-title").textContent = title;
+  setTurnStatus(r.thread.status?.type === "active");
+  refreshThreads();
+}
+
+async function promptRenameThread(id, currentName) {
+  openCustomModal("Rename thread", `<input id="rename-input" class="modal-input" value="${escapeHtml(currentName)}" />
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn-pill" onclick="closeModal()">Cancel</button>
+      <button class="btn-pill primary" id="rename-save-btn">Save</button>
+    </div>`);
+  const inp = document.getElementById("rename-input");
+  inp.focus();
+  inp.select();
+  document.getElementById("rename-save-btn").onclick = async () => {
+    const val = inp.value.trim();
+    if (val) {
+      await rpcCall("thread/name/set", { threadId: id, name: val });
+      if (id === currentThread) document.getElementById("topbar-title").textContent = val;
+      refreshThreads();
+    }
+    closeModal();
+  };
+}
+
+async function deleteThread(id) {
+  await rpcCall("thread/delete", { threadId: id });
+  if (id === currentThread) await newThread();
+  else refreshThreads();
+}
+
+function renderComposerChips() {
+  const wrap = document.getElementById("composer-chips");
+  wrap.innerHTML = "";
+  mentionedFiles.forEach((f, idx) => {
+    const chip = document.createElement("span");
+    chip.className = "context-chip";
+    chip.innerHTML = `<span>@${escapeHtml(f)}</span><button onclick="removeMention(${idx})">✕</button>`;
+    wrap.appendChild(chip);
+  });
+}
+window.removeMention = function(idx) {
+  mentionedFiles.splice(idx, 1);
+  renderComposerChips();
+};
+
+function handleSubmitOrStop() {
+  if (isTurnActive) {
+    if (currentThread) rpcCall("turn/interrupt", { threadId: currentThread, turnId: currentTurn || "" });
+  } else {
+    sendTurn();
+  }
+}
+
+async function runPromptPreset(promptText) {
+  const input = document.getElementById("composer-input");
+  input.value = promptText;
+  await sendTurn();
+}
+
+async function sendTurn() {
+  const input = document.getElementById("composer-input");
+  const raw = input.value.trim();
+  if (!raw && mentionedFiles.length === 0) return;
+
+  if (raw === "/new" || raw === "/clear") {
+    input.value = "";
+    autoResizeInput();
+    await newThread();
+    return;
+  }
+  if (raw === "/diff" || raw === "/review") {
+    input.value = "";
+    autoResizeInput();
+    toggleDrawer("diff");
+    return;
+  }
+
+  input.value = "";
+  autoResizeInput();
+  closeAutocomplete();
+
+  if (!currentThread) await newThread();
+  const payloadInput = [];
+  for (const f of mentionedFiles) {
+    payloadInput.push({ type: "mention", name: f, path: f });
+  }
+  mentionedFiles = [];
+  renderComposerChips();
+  if (raw) payloadInput.push({ type: "text", text: raw });
+
+  await rpcCall("turn/start", {
+    threadId: currentThread,
+    model: currentModel,
+    reasoningEffort: currentEffort,
+    sandboxPolicy: { type: currentSandbox === "read-only" ? "readOnly" : currentSandbox === "danger-full-access" ? "dangerFullAccess" : "workspaceWrite" },
+    input: payloadInput
+  });
+}
+
+// Floating Menu Positioning & Popovers (Project, Model, Effort, Sandbox, Open-in)
+function closeFloatingMenu() {
+  const menu = document.getElementById("floating-menu");
+  menu.classList.remove("open");
+  activeFloatingMenuKey = null;
+}
+
+function openFloatingMenuAt(key, anchorEl, html, preferAbove = true) {
+  const menu = document.getElementById("floating-menu");
+  if (activeFloatingMenuKey === key && menu.classList.contains("open")) {
+    closeFloatingMenu();
+    return;
+  }
+  activeFloatingMenuKey = key;
+  menu.innerHTML = html;
+  menu.classList.add("open");
+  const rect = anchorEl.getBoundingClientRect();
+  const mRect = menu.getBoundingClientRect();
+  let left = Math.max(12, Math.min(rect.left, window.innerWidth - mRect.width - 12));
+  let top = preferAbove ? (rect.top - mRect.height - 8) : (rect.bottom + 8);
+  if (top < 12) top = rect.bottom + 8;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+document.addEventListener("mousedown", e => {
+  const menu = document.getElementById("floating-menu");
+  if (menu.classList.contains("open") && !menu.contains(e.target) && !e.target.closest(".composer-chip-btn, .hero-sub, #openin-btn")) {
+    closeFloatingMenu();
+  }
+});
+
+async function toggleProjectPicker(e) {
+  e.stopPropagation();
+  const anchor = e.currentTarget;
+  await refreshProjects();
+  const renderList = (filterText = "") => {
+    const q = filterText.toLowerCase();
+    const filtered = projectsList.filter(p => (p.label || "").toLowerCase().includes(q) || (p.path || "").toLowerCase().includes(q));
+    return filtered.map(p => {
+      const active = p.path === currentCwd;
+      return `<button class="menu-item ${active ? "active" : ""}" onclick="selectProject('${escapeHtml(p.path)}')">
+        <div class="menu-item-left">${FOLDER_SVG}
+          <div class="menu-item-text">
+            <span class="menu-item-title">${escapeHtml(p.label || baseName(p.path))}</span>
+            <span class="menu-item-desc">${escapeHtml(p.path)}</span>
+          </div>
+        </div>
+        ${active ? CHECK_SVG : ""}
+      </button>`;
+    }).join("") || `<div style="padding:10px;font-size:12px;color:var(--text-tertiary)">No matching projects</div>`;
+  };
+
+  const html = `<div class="menu-section-title">Choose project</div>
+    <input id="proj-picker-search" class="menu-search" placeholder="Search projects…" />
+    <div id="proj-picker-items" style="display:flex;flex-direction:column;gap:2px;max-height:220px;overflow-y:auto">${renderList("")}</div>
+    <div class="menu-divider"></div>
+    <button class="menu-item" onclick="closeFloatingMenu();openCreateProjectDialog('existing')">
+      <div class="menu-item-left">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z"/></svg>
+        <span class="menu-item-title">Add existing folder or create project…</span>
+      </div>
+    </button>`;
+  openFloatingMenuAt("project", anchor, html, anchor.id === "project-pill-btn");
+  const inp = document.getElementById("proj-picker-search");
+  if (inp) {
+    inp.oninput = () => {
+      const box = document.getElementById("proj-picker-items");
+      if (box) box.innerHTML = renderList(inp.value);
+    };
+    inp.focus();
+  }
+}
+
+window.selectProject = async function(path) {
+  closeFloatingMenu();
+  if (!path) return;
+  await rpcCall("projects/create", { path, createDir: false });
+  updateCwdUI(path);
+  await newThread();
+};
+
+function toggleModelPicker(e) {
+  e.stopPropagation();
+  const anchor = e.currentTarget;
+  const itemsHtml = modelCatalog.map(m => {
+    const active = m.model === currentModel;
+    return `<button class="menu-item ${active ? "active" : ""}" onclick="selectModel('${escapeHtml(m.model)}')">
+      <div class="menu-item-left">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h6.572l-1.305 6.093a.75.75 0 0 0 1.292.657l8.5-9.5A.75.75 0 0 0 17.25 8h-6.572l1.305-6.093Z"/></svg>
+        <div class="menu-item-text">
+          <span class="menu-item-title">${escapeHtml(m.displayName || m.model)} <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">${escapeHtml(m.model)}</span></span>
+          <span class="menu-item-desc">${escapeHtml(m.description || "")}</span>
+        </div>
+      </div>
+      ${active ? CHECK_SVG : ""}
+    </button>`;
+  }).join("");
+
+  const html = `<div class="menu-section-title">Select model</div>
+    ${itemsHtml}
+    <div class="menu-divider"></div>
+    <button class="menu-item" onclick="toggleFastMode()">
+      <div class="menu-item-left">
+        <span style="font-size:14px">⚡</span>
+        <div class="menu-item-text">
+          <span class="menu-item-title">Fast mode (service_tier = fast)</span>
+          <span class="menu-item-desc">Prioritize lower latency responses</span>
+        </div>
+      </div>
+      ${fastMode ? CHECK_SVG : ""}
+    </button>`;
+  openFloatingMenuAt("model", anchor, html, true);
+}
+
+window.selectModel = async function(modelId) {
+  currentModel = modelId;
+  const mObj = modelCatalog.find(m => m.model === modelId);
+  if (mObj?.defaultReasoningEffort) {
+    const supported = (mObj.supportedReasoningEfforts || []).map(x => x.reasoningEffort);
+    if (supported.length && !supported.includes(currentEffort)) {
+      currentEffort = mObj.defaultReasoningEffort;
+    }
+  }
+  updateModelAndEffortUI();
+  closeFloatingMenu();
+  await rpcCall("settings/write", { model: currentModel, reasoningEffort: currentEffort });
+};
+
+window.toggleFastMode = async function() {
+  fastMode = !fastMode;
+  updateModelAndEffortUI();
+  closeFloatingMenu();
+  await rpcCall("settings/write", { serviceTier: fastMode ? "fast" : "auto" });
+};
+
+function toggleEffortPicker(e) {
+  e.stopPropagation();
+  const anchor = e.currentTarget;
+  const mObj = modelCatalog.find(m => m.model === currentModel);
+  const efforts = mObj?.supportedReasoningEfforts || [
+    { reasoningEffort: "low", label: "Light", description: "Fast responses for straightforward tasks" },
+    { reasoningEffort: "medium", label: "Medium", description: "Balanced speed and reasoning depth (Default)" },
+    { reasoningEffort: "high", label: "High", description: "Deep reasoning for complex architecture & bugs" },
+    { reasoningEffort: "xhigh", label: "Extra High", description: "Maximum multi-step reasoning effort" },
+    { reasoningEffort: "persistent", label: "Persistent", description: "Sustained autonomous reasoning across long tasks" }
+  ];
+  const html = `<div class="menu-section-title">Select reasoning effort</div>` +
+    efforts.map(ef => {
+      const active = ef.reasoningEffort === currentEffort;
+      return `<button class="menu-item ${active ? "active" : ""}" onclick="selectEffort('${escapeHtml(ef.reasoningEffort)}')">
+        <div class="menu-item-left">
+          <div class="menu-item-text">
+            <span class="menu-item-title">${escapeHtml(ef.label || EFFORT_LABELS[ef.reasoningEffort] || ef.reasoningEffort)}</span>
+            <span class="menu-item-desc">${escapeHtml(ef.description || "")}</span>
+          </div>
+        </div>
+        ${active ? CHECK_SVG : ""}
+      </button>`;
+    }).join("");
+  openFloatingMenuAt("effort", anchor, html, true);
+}
+
+window.selectEffort = async function(effort) {
+  currentEffort = effort;
+  updateModelAndEffortUI();
+  closeFloatingMenu();
+  await rpcCall("settings/write", { reasoningEffort: currentEffort });
+};
+
+function toggleSandboxPicker(e) {
+  e.stopPropagation();
+  const anchor = e.currentTarget;
+  const opts = [
+    { id: "read-only", title: "Read-only", desc: "Ask before running commands or editing files" },
+    { id: "workspace-write", title: "Workspace write", desc: "Edit files in project; ask before external commands" },
+    { id: "danger-full-access", title: "Full access", desc: "Run commands and edit files without asking" }
+  ];
+  const html = `<div class="menu-section-title">Sandbox permissions</div>` +
+    opts.map(o => {
+      const active = o.id === currentSandbox;
+      return `<button class="menu-item ${active ? "active" : ""}" onclick="selectSandbox('${o.id}')">
+        <div class="menu-item-left">
+          ${SANDBOX_ICONS[o.id]}
+          <div class="menu-item-text">
+            <span class="menu-item-title">${o.title}</span>
+            <span class="menu-item-desc">${o.desc}</span>
+          </div>
+        </div>
+        ${active ? CHECK_SVG : ""}
+      </button>`;
+    }).join("");
+  openFloatingMenuAt("sandbox", anchor, html, true);
+}
+
+window.selectSandbox = async function(sb) {
+  currentSandbox = sb;
+  updateSandboxUI();
+  closeFloatingMenu();
+  await rpcCall("settings/write", { sandboxMode: currentSandbox });
+};
+
+async function toggleOpenInMenu(e) {
+  e.stopPropagation();
+  const anchor = e.currentTarget;
+  if (!openInApps.length) {
+    const r = await rpcCall("openIn/list", {});
+    openInApps = r.apps || [];
+  }
+  const html = `<div class="menu-section-title">Open ${escapeHtml(baseName(currentCwd))} in…</div>` +
+    openInApps.map(a => `<button class="menu-item" onclick="launchOpenIn('${escapeHtml(a.id)}')">
+      <div class="menu-item-left">
+        <span class="menu-item-title">${escapeHtml(a.label)}</span>
+      </div>
+    </button>`).join("");
+  openFloatingMenuAt("openin", anchor, html, false);
+}
+
+window.launchOpenIn = async function(appId) {
+  closeFloatingMenu();
+  await rpcCall("openIn/open", { app: appId, path: currentCwd });
+};
+
+function toggleSidebar() {
+  const sb = document.getElementById("sidebar");
+  const topbar = document.getElementById("topbar");
+  const btn = document.getElementById("topbar-sidebar-btn");
+  const closed = sb.classList.toggle("collapsed");
+  topbar.classList.toggle("sidebar-closed", closed);
+  btn.style.display = closed ? "inline-flex" : "none";
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  if (html.classList.contains("dark")) {
+    html.classList.remove("dark");
+    html.classList.add("light");
+  } else {
+    html.classList.remove("light");
+    html.classList.add("dark");
+  }
+}
+
+// Right-Side Inspector Drawer (Diff / Files / Terminal)
+function toggleDrawer(tab) {
+  const d = document.getElementById("inspector-drawer");
+  if (drawerOpen && currentDrawerTab === tab) {
+    closeDrawer();
+    return;
+  }
+  drawerOpen = true;
+  d.classList.remove("closed");
+  switchDrawerTab(tab);
+}
+function closeDrawer() {
+  drawerOpen = false;
+  document.getElementById("inspector-drawer").classList.add("closed");
+}
+function switchDrawerTab(tab) {
+  currentDrawerTab = tab;
+  ["diff", "files", "terminal"].forEach(t => {
+    document.getElementById("tab-btn-" + t)?.classList.toggle("active", t === tab);
+  });
+  renderDrawerContent();
+}
+
+async function renderDrawerContent() {
+  const box = document.getElementById("drawer-content");
+  if (currentDrawerTab === "diff") {
+    const st = latestGitStatus || await rpcCall("workspace/gitStatus", { cwd: currentCwd || undefined });
+    latestGitStatus = st;
+    const files = st.changedFiles || [];
+    if (files.length === 0 && !st.diff) {
+      box.innerHTML = `<div style="color:var(--text-tertiary);padding:24px 8px;text-align:center">Working tree clean · No uncommitted changes</div>`;
+      return;
+    }
+    const listHtml = files.map(f => `<div style="display:flex;justify-content:space-between;padding:5px 8px;border-radius:6px;background:var(--bg-hover);margin-bottom:4px;font-family:var(--font-mono);font-size:11.5px">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(f.status)} ${escapeHtml(f.path)}</span>
+      <span><span class="diff-stat-add">+${f.added}</span> <span class="diff-stat-del">-${f.deleted}</span></span>
+    </div>`).join("");
+    box.innerHTML = `<div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+        <strong>Uncommitted changes (${files.length})</strong>
+        <button class="btn-pill" style="padding:3px 10px;font-size:11px" onclick="runPromptPreset('Review uncommitted git changes and suggest improvements.')">Ask Codex to review</button>
+      </div>
+      ${listHtml}
+      <div class="code-block-wrap" style="margin-top:10px"><pre class="code-block-pre" style="font-size:11.5px;white-space:pre-wrap">${renderColoredDiff(st.diff || "")}</pre></div>`;
+  } else if (currentDrawerTab === "files") {
+    const res = await rpcCall("fs/readDirectory", { cwd: currentCwd || undefined, query: "" });
+    const files = res.files || [];
+    box.innerHTML = `<div style="margin-bottom:8px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px">${escapeHtml(res.cwd || currentCwd)}</div>` +
+      files.map(f => `<div class="ac-item" onclick="previewWorkspaceFile('${escapeHtml(f.path)}')">
+        <span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(f.path)}</span>
+        <button class="thread-act-btn" title="Mention @file" onclick="event.stopPropagation();addFileMention('${escapeHtml(f.path)}')">@</button>
+      </div>`).join("");
+  } else if (currentDrawerTab === "terminal") {
+    box.innerHTML = `<div style="display:flex;gap:6px;margin-bottom:10px">
+        <input id="quick-cmd-input" class="modal-input" placeholder="Run command in workspace (e.g. git status, cargo check)…" />
+        <button class="btn-pill primary" onclick="execQuickCmd()">Run</button>
+      </div>
+      <pre id="quick-cmd-out" class="code-block-pre" style="background:var(--code-bg);border-radius:10px;border:1px solid var(--border-subtle);min-height:220px;white-space:pre-wrap">Ready in ${escapeHtml(currentCwd || ".")}</pre>`;
+    const inp = document.getElementById("quick-cmd-input");
+    inp?.addEventListener("keydown", e => { if (e.key === "Enter") execQuickCmd(); });
+    inp?.focus();
+  }
+}
+
+window.previewWorkspaceFile = async function(relPath) {
+  try {
+    const r = await rpcCall("fs/readFile", { cwd: currentCwd || undefined, path: relPath });
+    openCustomModal(relPath, `<div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+        <button class="btn-pill primary" onclick="addFileMention('${escapeHtml(relPath)}');closeModal()">@ Mention in Composer</button>
+      </div>
+      <pre class="code-block-pre" style="background:var(--code-bg);border-radius:10px;border:1px solid var(--border-subtle);max-height:55vh;overflow:auto">${escapeHtml(r.content || "")}</pre>`);
+  } catch (e) {}
+};
+
+window.addFileMention = function(relPath) {
+  if (!mentionedFiles.includes(relPath)) {
+    mentionedFiles.push(relPath);
+    renderComposerChips();
+  }
+};
+
+window.execQuickCmd = async function() {
+  const inp = document.getElementById("quick-cmd-input");
+  const out = document.getElementById("quick-cmd-out");
+  const cmd = inp?.value?.trim();
+  if (!cmd) return;
+  out.textContent = `$ ${cmd}\nRunning...`;
+  const r = await rpcCall("command/exec", { cwd: currentCwd || undefined, command: cmd });
+  out.textContent = `$ ${cmd} (exit ${r.exitCode})\n\n${r.output || ""}`;
+  refreshGitStatus();
+};
+
+// Modals & Create/Add Project Dialog (matching create-project-dialog-96f00b3e01aa.js)
+function openCustomModal(title, html) {
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-body").innerHTML = html;
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+function closeModal() {
+  document.getElementById("modal-backdrop").classList.remove("open");
+}
+
+function openCreateProjectDialog(initialTab = "existing") {
+  const renderTab = (tab) => {
+    const isNew = tab === "new";
+    const tabBar = `<div style="display:flex;gap:6px;margin-bottom:4px">
+      <button class="btn-pill ${!isNew ? "primary" : ""}" onclick="openCreateProjectDialog('existing')">Add existing folder</button>
+      <button class="btn-pill ${isNew ? "primary" : ""}" onclick="openCreateProjectDialog('new')">Create new project</button>
+    </div>`;
+    if (!isNew) {
+      openCustomModal("Add project to Codex", `${tabBar}
+        <div style="font-size:12.5px;color:var(--text-secondary)">Choose an existing project folder on your Mac or enter its path:</div>
+        <div style="display:flex;gap:8px">
+          <input id="proj-existing-path" class="modal-input" value="${escapeHtml(currentCwd)}" placeholder="/Users/you/Code/my-project" />
+          <button class="btn-pill" onclick="pickNativeFolderForInput('proj-existing-path')" style="white-space:nowrap">Choose folder…</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-tertiary)">Optional display name:</div>
+        <input id="proj-existing-label" class="modal-input" placeholder="Leave blank to use folder name" />
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+          <button class="btn-pill" onclick="closeModal()">Cancel</button>
+          <button class="btn-pill primary" onclick="submitAddExistingProject()">Open project</button>
+        </div>`);
+    } else {
+      const parentDefault = currentCwd ? currentCwd.replace(/\/[^/]+\/?$/, "") : "/Users/lkc/Code";
+      openCustomModal("Create a new project", `${tabBar}
+        <div style="font-size:12.5px;color:var(--text-secondary)">Create a new folder and register it in Codex:</div>
+        <div style="font-size:12px;color:var(--text-tertiary)">Project name</div>
+        <input id="proj-new-name" class="modal-input" placeholder="my-new-app" oninput="updateNewProjPreview()" />
+        <div style="font-size:12px;color:var(--text-tertiary)">Location</div>
+        <div style="display:flex;gap:8px">
+          <input id="proj-new-parent" class="modal-input" value="${escapeHtml(parentDefault)}" oninput="updateNewProjPreview()" />
+          <button class="btn-pill" onclick="pickNativeFolderForInput('proj-new-parent')" style="white-space:nowrap">Choose…</button>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-primary);cursor:pointer">
+          <input type="checkbox" id="proj-new-git" checked />
+          <span>Initialize Git repository (<code>git init</code>)</span>
+        </label>
+        <div id="proj-new-preview" style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-tertiary)"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+          <button class="btn-pill" onclick="closeModal()">Cancel</button>
+          <button class="btn-pill primary" onclick="submitCreateNewProject()">Create project</button>
+        </div>`);
+      updateNewProjPreview();
+      document.getElementById("proj-new-name")?.focus();
+    }
+  };
+  renderTab(initialTab);
+}
+
+window.pickNativeFolderForInput = async function(inputId) {
+  const r = await rpcCall("projects/pickFolder", {});
+  if (r.path) {
+    const el = document.getElementById(inputId);
+    if (el) {
+      el.value = r.path;
+      if (typeof updateNewProjPreview === "function") updateNewProjPreview();
+    }
+  }
+};
+
+window.updateNewProjPreview = function() {
+  const name = document.getElementById("proj-new-name")?.value?.trim() || "<project-name>";
+  const parent = (document.getElementById("proj-new-parent")?.value?.trim() || "").replace(/\/+$/, "");
+  const prev = document.getElementById("proj-new-preview");
+  if (prev) prev.textContent = `Path: ${parent}/${name}`;
+};
+
+window.submitAddExistingProject = async function() {
+  const path = document.getElementById("proj-existing-path")?.value?.trim();
+  const label = document.getElementById("proj-existing-label")?.value?.trim();
+  if (!path) return;
+  closeModal();
+  await rpcCall("projects/create", { path, label: label || undefined, createDir: false });
+  updateCwdUI(path);
+  await newThread();
+};
+
+window.submitCreateNewProject = async function() {
+  const name = document.getElementById("proj-new-name")?.value?.trim();
+  const parent = (document.getElementById("proj-new-parent")?.value?.trim() || "").replace(/\/+$/, "");
+  const initGit = !!document.getElementById("proj-new-git")?.checked;
+  if (!name || !parent) return;
+  const fullPath = `${parent}/${name}`;
+  closeModal();
+  await rpcCall("projects/create", { path: fullPath, label: name, createDir: true, initGit });
+  updateCwdUI(fullPath);
+  await newThread();
+};
+
+// Full Multi-Page Settings View (matching ChatGPT.app Settings)
+let currentSettingsSection = "general";
+
+async function openSettingsView(sec = "general") {
+  closeFloatingMenu();
+  document.getElementById("home-hero").classList.add("hidden");
+  document.getElementById("conversation-wrap").classList.add("hidden");
+  document.getElementById("composer-host").style.display = "none";
+  document.getElementById("settings-view").classList.add("open");
+  document.getElementById("topbar-title").textContent = "Settings";
+  await renderSettingsSection(sec);
+}
+
+function closeSettingsView() {
+  const sv = document.getElementById("settings-view");
+  if (!sv.classList.contains("open")) return;
+  sv.classList.remove("open");
+  document.getElementById("composer-host").style.display = "";
+  const hasMsgs = document.getElementById("messages").children.length > 0;
+  setViewMode(hasMsgs);
+  document.getElementById("topbar-title").textContent = hasMsgs ? "Thread" : "New thread";
+}
+
+async function renderSettingsSection(sec) {
+  currentSettingsSection = sec;
+  document.querySelectorAll(".settings-nav-btn").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-sec") === sec);
+  });
+  const box = document.getElementById("settings-body");
+  const st = await rpcCall("settings/read", { cwd: currentCwd || undefined });
+
+  if (sec === "general") {
+    const apps = openInApps.length ? openInApps : ((await rpcCall("openIn/list", {})).apps || []);
+    openInApps = apps;
+    box.innerHTML = `<h1 class="settings-h1">General</h1>
+      <div class="settings-sub">Configure default editor, terminal, and workspace behavior shared with <code>~/.codex/</code>.</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Default Open-in Target</div>
+            <div class="settings-row-desc">Preferred IDE or terminal when clicking Open in the topbar</div>
+          </div>
+          <select class="settings-select" onchange="launchOpenIn(this.value)">
+            ${apps.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Active Workspace Directory</div>
+            <div class="settings-row-desc"><code>${escapeHtml(currentCwd)}</code></div>
+          </div>
+          <button class="btn-pill" onclick="openCreateProjectDialog('existing')">Change folder…</button>
+        </div>
+      </div>`;
+  } else if (sec === "appearance") {
+    const isDark = document.documentElement.classList.contains("dark");
+    box.innerHTML = `<h1 class="settings-h1">Appearance</h1>
+      <div class="settings-sub">Customize theme, color scheme, and density.</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Theme</div>
+            <div class="settings-row-desc">Switch between Codex dark and light vibrancy surfaces</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn-pill ${isDark ? "primary" : ""}" onclick="document.documentElement.classList.replace('light','dark');renderSettingsSection('appearance')">Dark</button>
+            <button class="btn-pill ${!isDark ? "primary" : ""}" onclick="document.documentElement.classList.replace('dark','light');renderSettingsSection('appearance')">Light</button>
+          </div>
+        </div>
+      </div>`;
+  } else if (sec === "configuration") {
+    box.innerHTML = `<h1 class="settings-h1">Configuration</h1>
+      <div class="settings-sub">Default model, reasoning effort, fast mode, and sandbox policy stored in <code>~/.codex/config.toml</code>.</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Default Model</div>
+            <div class="settings-row-desc">Model used for new threads and turns</div>
+          </div>
+          <select class="settings-select" onchange="selectModel(this.value);renderSettingsSection('configuration')">
+            ${modelCatalog.map(m => `<option value="${escapeHtml(m.model)}" ${m.model === currentModel ? "selected" : ""}>${escapeHtml(m.displayName)} (${escapeHtml(m.model)})</option>`).join("")}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Reasoning Effort</div>
+            <div class="settings-row-desc">Controls thinking depth before responding</div>
+          </div>
+          <select class="settings-select" onchange="selectEffort(this.value);renderSettingsSection('configuration')">
+            ${Object.entries(EFFORT_LABELS).map(([k, v]) => `<option value="${k}" ${k === currentEffort ? "selected" : ""}>${v} (${k})</option>`).join("")}
+          </select>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Fast Mode (service_tier = fast)</div>
+            <div class="settings-row-desc">Prioritize lower-latency token generation</div>
+          </div>
+          <button class="btn-pill ${fastMode ? "primary" : ""}" onclick="toggleFastMode();renderSettingsSection('configuration')">${fastMode ? "Enabled ⚡" : "Disabled"}</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Sandbox Mode</div>
+            <div class="settings-row-desc">Filesystem and command execution permission boundary</div>
+          </div>
+          <select class="settings-select" onchange="selectSandbox(this.value);renderSettingsSection('configuration')">
+            <option value="read-only" ${currentSandbox === "read-only" ? "selected" : ""}>Read-only</option>
+            <option value="workspace-write" ${currentSandbox === "workspace-write" ? "selected" : ""}>Workspace write</option>
+            <option value="danger-full-access" ${currentSandbox === "danger-full-access" ? "selected" : ""}>Full access</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-card">
+        <div class="settings-row-label">Raw <code>~/.codex/config.toml</code></div>
+        <textarea id="raw-config-toml" class="modal-input" style="min-height:180px;resize:vertical">${escapeHtml(st.rawConfigToml || "")}</textarea>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn-pill primary" onclick="saveRawConfigToml()">Save config.toml</button>
+        </div>
+      </div>`;
+  } else if (sec === "personalization") {
+    box.innerHTML = `<h1 class="settings-h1">Personalization &amp; AGENTS.md</h1>
+      <div class="settings-sub">Custom instructions automatically injected into Codex sessions.</div>
+      <div class="settings-card">
+        <div class="settings-row-label">Global Instructions (<code>~/.codex/AGENTS.md</code>)</div>
+        <textarea id="global-agents-md" class="modal-input" style="min-height:140px;resize:vertical" placeholder="Global coding style, preferences, and rules…">${escapeHtml(st.globalAgentsMd || "")}</textarea>
+        <div class="settings-row-label" style="margin-top:8px">Project Instructions (<code>${escapeHtml(currentCwd)}/AGENTS.md</code>)</div>
+        <textarea id="project-agents-md" class="modal-input" style="min-height:140px;resize:vertical" placeholder="Project-specific build, test, and architecture conventions…">${escapeHtml(st.projectAgentsMd || "")}</textarea>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn-pill primary" onclick="saveAgentsMd()">Save Instructions</button>
+        </div>
+      </div>`;
+  } else if (sec === "mcp") {
+    const servers = st.mcpServers || [];
+    box.innerHTML = `<h1 class="settings-h1">MCP Servers</h1>
+      <div class="settings-sub">Model Context Protocol servers configured in <code>~/.codex/config.toml</code>.</div>
+      <div class="settings-card">
+        <div class="settings-row-label">Add New MCP Server</div>
+        <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px">
+          <input id="mcp-new-name" class="modal-input" placeholder="Server name (e.g. filesystem)" />
+          <input id="mcp-new-cmd" class="modal-input" placeholder="Command & args (e.g. npx -y @modelcontextprotocol/server-filesystem .)" />
+          <button class="btn-pill primary" onclick="addMcpServerFromSettings()">Add</button>
+        </div>
+      </div>
+      ${servers.map(s => `<div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">${escapeHtml(s.name)} <span style="color:var(--green-400);font-size:11px">● configured</span></div>
+            <div class="settings-row-desc" style="font-family:var(--font-mono)">${escapeHtml(s.command || s.url || "")} ${escapeHtml((s.args || []).join(" "))}</div>
+          </div>
+          <button class="btn-pill danger" onclick="removeMcpServerFromSettings('${escapeHtml(s.name)}')">Remove</button>
+        </div>
+      </div>`).join("") || `<div style="color:var(--text-tertiary)">No MCP servers configured.</div>`}`;
+  } else if (sec === "skills") {
+    const r = await rpcCall("skills/list", {});
+    const list = r.data || [];
+    box.innerHTML = `<h1 class="settings-h1">Skills &amp; Plugins</h1>
+      <div class="settings-sub">Installed plugins and skills discovered in <code>~/.codex/plugins</code> and <code>~/.codex/skills</code>.</div>
+      ${list.map(p => `<div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">${escapeHtml(p.name)} <span style="font-size:11.5px;color:var(--text-tertiary)">(${p.skills} skills)</span></div>
+            <div class="settings-row-desc">${escapeHtml(p.description || p.path || "")}</div>
+          </div>
+          <span class="pill-badge">Installed</span>
+        </div>
+      </div>`).join("") || `<div style="color:var(--text-tertiary)">No plugins found.</div>`}`;
+  } else if (sec === "git") {
+    await refreshGitStatus();
+    box.innerHTML = `<h1 class="settings-h1">Git &amp; Worktrees</h1>
+      <div class="settings-sub">Repository status and branch configuration for the current project.</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Current Branch</div>
+            <div class="settings-row-desc"><code>${escapeHtml(latestGitStatus?.branch || "Not a git repository")}</code></div>
+          </div>
+          <span class="pill-badge"><span class="diff-stat-add">+${latestGitStatus?.totalAdded || 0}</span> <span class="diff-stat-del">-${latestGitStatus?.totalDeleted || 0}</span></span>
+        </div>
+      </div>`;
+  } else if (sec === "environments") {
+    await refreshProjects();
+    box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h1 class="settings-h1" style="margin:0">Projects &amp; Environments</h1>
+        <button class="btn-pill primary" onclick="openCreateProjectDialog('existing')">+ Add or Create Project</button>
+      </div>
+      <div class="settings-sub">Projects shared between ChatGPT.app and mcodex via <code>~/.codex/.codex-global-state.json</code>.</div>
+      ${projectsList.map(p => `<div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">${escapeHtml(p.label)} ${p.active ? `<span style="color:var(--green-400);font-size:11px">● active</span>` : ""}</div>
+            <div class="settings-row-desc" style="font-family:var(--font-mono)">${escapeHtml(p.path)} · trust: ${escapeHtml(p.trustLevel)}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn-pill" onclick="selectProject('${escapeHtml(p.path)}');closeSettingsView()">Switch</button>
+            <button class="btn-pill danger" onclick="removeProjectFromSettings('${escapeHtml(p.path)}')">Remove</button>
+          </div>
+        </div>
+      </div>`).join("")}`;
+  } else if (sec === "account") {
+    const acc = await rpcCall("account/read", {});
+    box.innerHTML = `<h1 class="settings-h1">Account</h1>
+      <div class="settings-sub">Authentication credentials loaded from <code>~/.codex/auth.json</code>.</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Authentication Mode</div>
+            <div class="settings-row-desc">${escapeHtml(acc.account?.type || "unknown")}</div>
+          </div>
+          <span class="pill-badge" style="color:var(--green-400)">Connected</span>
+        </div>
+      </div>`;
+  }
+}
+
+window.saveRawConfigToml = async function() {
+  const rawConfigToml = document.getElementById("raw-config-toml")?.value;
+  if (rawConfigToml !== undefined) {
+    await rpcCall("settings/write", { rawConfigToml });
+    await renderSettingsSection("configuration");
+  }
+};
+
+window.saveAgentsMd = async function() {
+  const globalAgentsMd = document.getElementById("global-agents-md")?.value;
+  const projectAgentsMd = document.getElementById("project-agents-md")?.value;
+  await rpcCall("settings/write", { cwd: currentCwd || undefined, globalAgentsMd, projectAgentsMd });
+  await renderSettingsSection("personalization");
+};
+
+window.addMcpServerFromSettings = async function() {
+  const name = document.getElementById("mcp-new-name")?.value?.trim();
+  const cmdLine = document.getElementById("mcp-new-cmd")?.value?.trim();
+  if (!name || !cmdLine) return;
+  const parts = cmdLine.split(/\s+/);
+  await rpcCall("mcp/addServer", { name, command: parts[0], args: parts.slice(1) });
+  await renderSettingsSection("mcp");
+};
+
+window.removeMcpServerFromSettings = async function(name) {
+  await rpcCall("mcp/removeServer", { name });
+  await renderSettingsSection("mcp");
+};
+
+window.removeProjectFromSettings = async function(path) {
+  await rpcCall("projects/remove", { path });
+  await refreshThreads();
+  await renderSettingsSection("environments");
+};
+
+// @ File Mention & / Slash Command Autocomplete
+function triggerFileMention() {
+  const inp = document.getElementById("composer-input");
+  inp.value += (inp.value && !inp.value.endsWith(" ") ? " @" : "@");
+  inp.focus();
+  handleComposerInput();
+}
+
+function closeAutocomplete() {
+  document.getElementById("autocomplete-popover").classList.remove("open");
+}
+
+async function handleComposerInput() {
+  autoResizeInput();
+  const inp = document.getElementById("composer-input");
+  const val = inp.value;
+  const pop = document.getElementById("autocomplete-popover");
+
+  if (val.startsWith("/")) {
+    const q = val.slice(1).toLowerCase();
+    const cmds = [
+      { cmd: "/new", desc: "Start a fresh conversation thread" },
+      { cmd: "/review", desc: "Open uncommitted git diff inspector" },
+      { cmd: "/diff", desc: "Show workspace git status & diff" },
+      { cmd: "/clear", desc: "Clear current thread view" }
+    ].filter(c => c.cmd.includes(q));
+    if (cmds.length > 0) {
+      pop.innerHTML = cmds.map(c => `<div class="ac-item" onclick="applySlashCmd('${c.cmd}')">
+        <strong>${c.cmd}</strong><span class="ac-item-sub">${c.desc}</span>
+      </div>`).join("");
+      pop.classList.add("open");
+      return;
+    }
+  }
+
+  const atMatch = val.match(/(?:^|\s)@([^\s]*)$/);
+  if (atMatch) {
+    const query = atMatch[1];
+    const r = await rpcCall("fs/readDirectory", { cwd: currentCwd || undefined, query });
+    const files = (r.files || []).slice(0, 12);
+    if (files.length > 0) {
+      pop.innerHTML = files.map(f => `<div class="ac-item" onclick="selectAtFile('${escapeHtml(f.path)}')">
+        <span style="font-family:var(--font-mono)">${escapeHtml(f.path)}</span>
+        <span class="ac-item-sub">mention</span>
+      </div>`).join("");
+      pop.classList.add("open");
+      return;
+    }
+  }
+  closeAutocomplete();
+}
+
+window.applySlashCmd = function(cmd) {
+  const inp = document.getElementById("composer-input");
+  inp.value = cmd;
+  closeAutocomplete();
+  sendTurn();
+};
+
+window.selectAtFile = function(path) {
+  const inp = document.getElementById("composer-input");
+  inp.value = inp.value.replace(/(?:^|\s)@([^\s]*)$/, " ").trimStart();
+  addFileMention(path);
+  closeAutocomplete();
+  inp.focus();
+};
+
+function autoResizeInput() {
+  const el = document.getElementById("composer-input");
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 200) + "px";
+}
+
+const composerEl = document.getElementById("composer-input");
+composerEl.addEventListener("input", handleComposerInput);
+composerEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    handleSubmitOrStop();
+  } else if (e.key === "Escape") {
+    closeAutocomplete();
+    closeFloatingMenu();
+  }
+});
+
+window.addEventListener("keydown", e => {
+  if (e.metaKey && e.key.toLowerCase() === "n") {
+    e.preventDefault();
+    closeSettingsView();
+    newThread();
+  } else if (e.metaKey && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    toggleSidebar();
+  } else if (e.metaKey && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    document.getElementById("thread-search")?.focus();
+  } else if (e.metaKey && e.key === ",") {
+    e.preventDefault();
+    openSettingsView("general");
+  }
+});
+
+(async function boot() {
+  updateSandboxUI();
+  await rpcCall("initialize", { clientInfo: { name: "mcodex-app", version: "0.2.0" } });
+  rpcSend({ method: "initialized" });
+
+  const m = await rpcCall("model/list", {});
+  if (m.data && m.data.length > 0) {
+    modelCatalog = m.data;
+    currentModel = m.defaultModel || m.data[0].model;
+    currentEffort = m.defaultReasoningEffort || "medium";
+    fastMode = m.serviceTier === "fast";
+    updateModelAndEffortUI();
+  }
+
+  const st = await rpcCall("settings/read", {});
+  if (st.sandboxMode) {
+    currentSandbox = st.sandboxMode;
+    updateSandboxUI();
+  }
+
+  const acc = await rpcCall("account/read", {});
+  if (acc.account?.type === "chatgpt") {
+    document.getElementById("account-label").textContent = "ChatGPT Plus / Pro";
+    document.getElementById("account-sub").textContent = "Settings · Codex OAuth";
+  } else if (acc.account?.type === "apiKey") {
+    document.getElementById("account-label").textContent = "OpenAI API Key";
+    document.getElementById("account-sub").textContent = "Settings · Direct API";
+  }
+
+  await refreshThreads();
+  await newThread();
+})();
+</script>
+</body>
+</html>
