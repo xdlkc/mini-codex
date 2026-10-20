@@ -36,7 +36,7 @@ For a remote machine without a matching binary, transfer the source archive, ext
 An installer or SSH controller should verify the archive SHA-256 against the external manifest before extraction, then verify `bin/mcodex` against the internal manifest. After that check, install the extracted executable in a versioned user directory. For example, from inside an extracted binary package:
 
 ```sh
-AGENT_INSTALL_DIR="$HOME/.local/share/mini-codex/agents/0.2.0/x86_64-apple-darwin"
+AGENT_INSTALL_DIR="$HOME/.local/share/mini-codex/agents/0.0.1/x86_64-apple-darwin"
 install -d "$AGENT_INSTALL_DIR"
 install -m 755 bin/mcodex "$AGENT_INSTALL_DIR/mcodex"
 MCODEX_HOME="$HOME/.mcodex-remote" "$AGENT_INSTALL_DIR/mcodex" -C /absolute/project app-server
