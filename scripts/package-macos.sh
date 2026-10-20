@@ -6,8 +6,19 @@ cd "$ROOT_DIR"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-APP_NAME="Codex"
-BUNDLE_ID="com.minicodex.app"
+APP_NAME="Mini ChatGPT"
+BUNDLE_ID="com.minicodex.desktop"
+BUILD_PROFILE="release"
+APP_ONLY=0
+REGEN_ICON=0
+for argument in "$@"; do
+  case "$argument" in
+    --debug) BUILD_PROFILE="debug" ;;
+    --app-only) APP_ONLY=1 ;;
+    --regen-icon) REGEN_ICON=1 ;;
+    *) echo "Unknown option: $argument" >&2; exit 2 ;;
+  esac
+done
 VERSION="$(grep -E '^version\s*=' Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
@@ -15,7 +26,7 @@ DMG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos.dmg"
 PKG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos.pkg"
 
 echo "==> [1/5] Preparing App Icon (assets/AppIcon.icns)..."
-if [[ ! -f "assets/AppIcon.icns" || ! -f "assets/icon_256.png" || "${1:-}" == "--regen-icon" ]]; then
+if [[ ! -f "assets/AppIcon.icns" || ! -f "assets/icon_256.png" || "$REGEN_ICON" == "1" ]]; then
   swift -e '
 import AppKit
 let svgURL = URL(fileURLWithPath: "assets/icon.svg")
@@ -46,7 +57,7 @@ let pngData = rep.representation(using: .png, properties: [:])!
 try! pngData.write(to: URL(fileURLWithPath: "assets/icon.png"))
 '
   sips -z 256 256 assets/icon.png --out assets/icon_256.png >/dev/null
-  ICONSET_DIR="$(mktemp -d)/Codex.iconset"
+  ICONSET_DIR="$(mktemp -d)/MiniChatGPT.iconset"
   mkdir -p "$ICONSET_DIR"
   for sz in 16 32 128 256 512; do
     sips -z "$sz" "$sz" assets/icon.png --out "$ICONSET_DIR/icon_${sz}x${sz}.png" >/dev/null
@@ -57,17 +68,22 @@ try! pngData.write(to: URL(fileURLWithPath: "assets/icon.png"))
   rm -rf "$(dirname "$ICONSET_DIR")"
 fi
 
-echo "==> [2/5] Building release binary (mcodex v${VERSION})..."
-cargo build --release
+echo "==> [2/5] Building ${BUILD_PROFILE} binary (mcodex v${VERSION})..."
+if [[ "$BUILD_PROFILE" == "release" ]]; then cargo build --release; else cargo build; fi
 
 echo "==> [3/5] Assembling ${APP_NAME}.app bundle..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-cp "target/release/mcodex" "$APP_BUNDLE/Contents/MacOS/mcodex"
+cp "target/$BUILD_PROFILE/mcodex" "$APP_BUNDLE/Contents/MacOS/mcodex"
 chmod +x "$APP_BUNDLE/Contents/MacOS/mcodex"
 cp "assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+mkdir -p "$APP_BUNDLE/Contents/Resources/ThirdPartyLicenses"
+cp src/vendor/LICENSE-*.txt "$APP_BUNDLE/Contents/Resources/ThirdPartyLicenses/"
+if [[ -d src/vendor/editor/licenses ]]; then
+  cp -R src/vendor/editor/licenses "$APP_BUNDLE/Contents/Resources/ThirdPartyLicenses/Editor"
+fi
 printf "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
@@ -93,6 +109,10 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
   <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Mini ChatGPT uses the microphone only when you start a voice conversation.</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.0</string>
   <key>NSHighResolutionCapable</key>
@@ -104,6 +124,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
 EOF
 
 codesign --force --deep --sign - "$APP_BUNDLE"
+
+if [[ "$APP_ONLY" == "1" ]]; then
+  echo "App bundle ready: $APP_BUNDLE"
+  exit 0
+fi
 
 echo "==> [4/5] Building DMG disk image (${DMG_PATH})..."
 rm -f "$DMG_PATH"

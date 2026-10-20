@@ -1,0 +1,28 @@
+{
+  "name": "mini-codex-editor-vendor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tiptap/core": "3.32.0",
+    "@tiptap/extension-drag-handle": "3.32.0",
+    "@tiptap/extension-link": "3.32.0",
+    "@tiptap/extension-list": "3.32.0",
+    "@tiptap/extension-mathematics": "3.32.0",
+    "@tiptap/extension-table": "3.32.0",
+    "@tiptap/markdown": "3.32.0",
+    "@tiptap/pm": "3.32.0",
+    "@tiptap/starter-kit": "3.32.0",
+    "katex": "0.18.10",
+    "marked": "17.0.6"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "jsdom": "26.1.0",
+    "postcss": "8.5.6"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test.mjs"
+  }
+}

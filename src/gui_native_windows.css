@@ -1,0 +1,24 @@
+.native-window-controls{display:flex!important;align-items:center;gap:3px}
+.native-window-controls button{width:auto;min-width:28px;padding:3px 7px;font-size:11px;white-space:nowrap}
+body:is(.native-mini,.native-popout) #desktop-app-rail,body:is(.native-mini,.native-popout) #sidebar,body:is(.native-mini,.native-popout) #topbar-sidebar-btn,body:is(.native-mini,.native-popout) #workspace-tabs{display:none!important}
+body:is(.native-mini,.native-popout) #app{min-width:0;padding-left:0}
+body:is(.native-mini,.native-popout) #main-col{min-width:0}
+body:is(.native-mini,.native-popout) #topbar,body:is(.native-mini,.native-popout) #topbar.sidebar-closed{padding:7px 8px 7px 78px!important;min-height:42px}
+body:is(.native-mini,.native-popout) .topbar-right{display:flex;gap:0}
+body:is(.native-mini,.native-popout) #topbar-title{font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.native-mini #home-hero{padding-top:24px;min-height:70px}
+body.native-mini #home-hero h1{font-size:21px;margin:10px 0}
+body.native-mini .starter-grid,body.native-mini .composer-context,body.native-mini #branch-badge{display:none!important}
+body:is(.native-mini,.native-popout) #composer-host{padding:8px 10px 12px}
+body:is(.native-mini,.native-popout) .composer-controls-left{gap:1px;flex-wrap:wrap;min-width:0}
+body:is(.native-mini,.native-popout) .composer-chip-btn{font-size:10px;padding:3px 5px;max-width:150px}
+body:is(.native-mini,.native-popout) .conversation-inner{padding:8px 18px}
+body:is(.native-mini,.native-popout) .native-window-controls button{font-size:10px;padding:3px 4px}
+body:is(.native-mini,.native-popout) .voice-overlay-card{max-width:calc(100vw - 20px)}
+body:is(.native-mini,.native-popout) #composer-host .composer-pill{display:flex!important;flex-direction:column!important;align-items:stretch!important;border-radius:20px!important;gap:7px!important;padding:10px 12px!important}
+body:is(.native-mini,.native-popout) #composer-host #composer-input{order:0!important;flex:none!important;width:100%!important;min-height:52px!important;font-size:14px!important;padding:3px!important}
+body:is(.native-mini,.native-popout) #composer-host .composer-bar{display:flex!important;justify-content:space-between;align-items:center;gap:4px}
+body:is(.native-mini,.native-popout) #composer-host .composer-controls-left{display:flex!important;flex:1;order:0!important}
+body:is(.native-mini,.native-popout) #composer-host #model-pill-btn{order:0!important;max-width:120px}
+body:is(.native-mini,.native-popout) #composer-host #submit-btn{order:2!important;flex-shrink:0}
+body:is(.native-mini,.native-popout) #composer-host #voice-composer-controls{flex-shrink:0}

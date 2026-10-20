@@ -1,0 +1,13 @@
+.stored-attachment-chip { background:var(--bg-subtle); }
+#files-import-status { font-size:12px; color:var(--text-secondary); padding:0 8px 6px; }
+#files-import-status:empty { display:none; }
+.attachment-unreadable { border-color:var(--red-400); }
+.file-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.attachment-text-preview { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.6; max-height:50vh; overflow:auto; padding:12px; background:var(--bg-subtle); border-radius:8px; user-select:text; }
+.attachment-preview-image { display:block; max-width:100%; max-height:50vh; object-fit:contain; margin:auto; border-radius:8px; }
+.attachment-parse-error { color:var(--red-400); font-size:12px; line-height:1.6; }
+.file-library-card { position:relative; min-height:145px; display:flex; flex-direction:column; gap:12px; }
+.file-card-open { border:0; padding:0; background:transparent; color:var(--text-primary); text-align:left; cursor:pointer; font-weight:550; overflow-wrap:anywhere; }
+.file-card-open:hover { text-decoration:underline; }
+.file-card-delete { align-self:flex-start; border:0; background:transparent; color:var(--text-tertiary); padding:0; cursor:pointer; font-size:12px; }
+.message-file-card { display:block; border:1px solid var(--border-default); border-radius:10px; padding:8px 12px; margin-top:10px; max-width:100%; overflow-wrap:anywhere; background:var(--bg-elevated); color:var(--text-primary); font-size:13px; cursor:pointer; text-align:left; }

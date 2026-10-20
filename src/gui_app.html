@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Codex</title>
+<meta http-equiv="Content-Security-Policy" content="frame-src about:; object-src 'none'; base-uri 'none'" />
+<title>Mini ChatGPT</title>
 <style>
   :root {
     --gray-0: #ffffff;
@@ -547,6 +548,38 @@
     margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--font-mono);
     font-size: 12.5px; line-height: 1.5; color: var(--text-primary); white-space: pre;
   }
+  /* MARKDOWN_VENDOR_STYLES */
+  /* EDITOR_VENDOR_STYLES */
+  .msg-agent h5, .msg-agent h6 { margin:16px 0 8px; font-size:14px; font-weight:600; }
+  .msg-agent a { color:var(--blue-300); text-decoration:none; }
+  .msg-agent a:hover { text-decoration:underline; }
+  .msg-agent img { display:block; max-width:100%; height:auto; border-radius:10px; margin:12px 0; }
+  .msg-agent li > ul, .msg-agent li > ol { margin-top:4px; margin-bottom:4px; }
+  .msg-agent .task-list-item { list-style:none; position:relative; }
+  .msg-agent .task-list-item > input { margin-left:-20px; margin-right:5px; accent-color:var(--blue-300); }
+  .markdown-table-wrap { max-width:100%; overflow-x:auto; margin:10px 0 14px; }
+  .msg-agent .markdown-table-wrap table { margin:0; min-width:max-content; }
+  .markdown-math-block { max-width:100%; overflow-x:auto; margin:16px 0; }
+  .markdown-math-block .katex-display { margin:0; }
+  .msg-agent .katex { font-size:1.08em; }
+  .math-source, .markdown-fallback { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .code-block-pre .hljs { display:block; background:transparent; padding:0; color:var(--text-primary); }
+  .hljs-comment, .hljs-quote { color:#77818b; font-style:italic; }
+  .hljs-keyword, .hljs-selector-tag, .hljs-literal { color:#b359aa; }
+  .hljs-string, .hljs-regexp, .hljs-addition { color:#267d4a; }
+  .hljs-number, .hljs-symbol, .hljs-variable, .hljs-template-variable { color:#966119; }
+  .hljs-title, .hljs-title.function_, .hljs-section, .hljs-built_in { color:#286eaa; }
+  .hljs-type, .hljs-attribute, .hljs-attr { color:#8c5a31; }
+  .hljs-tag, .hljs-name { color:#39734d; }
+  .hljs-deletion { color:#b43e3e; }
+  .hljs-meta { color:#747d92; }
+  html.dark .hljs-keyword, html.dark .hljs-selector-tag, html.dark .hljs-literal { color:#c792ea; }
+  html.dark .hljs-string, html.dark .hljs-regexp, html.dark .hljs-addition { color:#a5cf92; }
+  html.dark .hljs-number, html.dark .hljs-symbol, html.dark .hljs-variable, html.dark .hljs-template-variable { color:#e7b27d; }
+  html.dark .hljs-title, html.dark .hljs-section, html.dark .hljs-built_in { color:#87bfe8; }
+  html.dark .hljs-type, html.dark .hljs-attribute, html.dark .hljs-attr { color:#e9c891; }
+  html.dark .hljs-tag, html.dark .hljs-name { color:#a3ce91; }
+  html.dark .hljs-deletion { color:#ee9292; }
   .msg-agent-actions {
     display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.14s ease;
     user-select: none; margin-top: -2px;
@@ -759,6 +792,8 @@
     padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-default);
     background: var(--bg-elevated); color: var(--text-primary); font-size: 12.5px; outline: none;
   }
+/* DESKTOP_STYLES */
+/* SCHEDULED_STYLES */
 </style>
 </head>
 <body>
@@ -774,22 +809,17 @@
       </button>
     </div>
 
-    <div class="sidebar-nav">
-      <div class="nav-row active" id="nav-home" onclick="closeSettingsView();newThread()">
-        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h3a1 1 0 001-1v-3h2v3a1 1 0 001 1h3a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg>
-        <span>New thread</span>
-        <span class="shortcut">⌘N</span>
-      </div>
-      <div class="nav-row" onclick="openSettingsView('skills')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-        <span>Skills &amp; Plugins</span>
-      </div>
-      <div class="nav-row" onclick="openSettingsView('mcp')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span>MCP Servers</span>
-      </div>
+    <div class="mode-switcher" role="tablist" aria-label="Workspace mode">
+      <button role="tab" id="mode-chat" onclick="switchMode('chat')">Chat</button>
+      <button role="tab" id="mode-work" onclick="switchMode('work')">Work</button>
+      <button role="tab" id="mode-codex" onclick="switchMode('codex')">Codex</button>
     </div>
-
+    <nav class="sidebar-nav" aria-label="Main navigation">
+      <button class="nav-row active" id="nav-home" onclick="newThread()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7"/><path d="m16 3 5 5-10 10-5 1 1-5z"/></svg><span id="new-label">New chat</span><span class="shortcut">⌘N</span></button>
+      <button class="nav-row" id="nav-search" onclick="openSearch()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.8" cy="10.8" r="7.8"/><path d="m16.4 16.4 4.6 4.6"/></svg><span>Search</span><span class="shortcut">⌘K</span></button>
+      <button class="nav-row work-only" id="nav-library" onclick="showLibrary()"><span class="nav-symbol">▤</span><span>Library</span></button>
+      <button class="nav-row codex-only" onclick="openSettingsView('skills')"><span class="nav-symbol">◇</span><span>Skills &amp; plugins</span></button>
+    </nav>
     <div class="sidebar-search">
       <div class="search-box">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -798,10 +828,10 @@
     </div>
 
     <div class="sidebar-section-label">
-      <span>Projects &amp; Threads</span>
+      <span id="sidebar-section-title">Chats</span>
       <div style="display:flex;align-items:center;gap:6px">
         <span id="thread-count" style="font-weight:400"></span>
-        <button class="thread-act-btn" title="Add or create project" onclick="openCreateProjectDialog()" style="font-size:14px;padding:0 5px">+</button>
+        <button class="thread-act-btn" title="Add or create project" onclick="createDesktopProject()" style="font-size:14px;padding:0 5px">+</button>
       </div>
     </div>
     <div id="thread-list"></div>
@@ -856,6 +886,8 @@
       </div>
     </header>
 
+    <div id="workspace-tabs" role="tablist" aria-label="Open chats"></div>
+    <section id="work-library" class="hidden" aria-label="Library"></section>
     <!-- Full Multi-Page Settings View (ChatGPT.app Settings) -->
     <section id="settings-view">
       <nav class="settings-nav">
@@ -927,6 +959,7 @@
 
     <!-- Bottom Rounded-Pill Composer (border-radius: 28px) -->
     <div id="composer-host">
+      <input id="attachment-input" type="file" multiple hidden accept="image/png,image/jpeg,image/webp,text/*,.md,.json,.csv,.rs,.js,.ts,.py,.html,.css,.toml" />
       <div id="autocomplete-popover"></div>
       <div class="composer-pill">
         <div id="composer-chips"></div>
@@ -934,7 +967,7 @@
         <div class="composer-bar">
           <div class="composer-controls-left">
             <!-- + Attachment / File mention button -->
-            <button class="composer-chip-btn" onclick="triggerFileMention()" title="Mention a file (@)">
+            <button class="composer-chip-btn" onclick="showAttachmentMenu(event)" title="Add photos and files">
               <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z"/></svg>
             </button>
             <!-- Workspace Folder / Project Picker Pill -->
@@ -1001,6 +1034,8 @@
   </div>
 </div>
 <script>
+// MARKDOWN_VENDOR
+// EDITOR_VENDOR
 // Exact SVG icons for sandbox states from ChatGPT.app
 const SANDBOX_ICONS = {
   "read-only": `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>`,
@@ -1014,11 +1049,10 @@ const SANDBOX_LABELS = {
 };
 const SANDBOX_ORDER = ["workspace-write", "read-only", "danger-full-access"];
 const EFFORT_LABELS = {
-  "low": "Light",
+  "low": "Low",
   "medium": "Medium",
   "high": "High",
-  "xhigh": "Extra High",
-  "persistent": "Persistent"
+  "xhigh": "Extra High"
 };
 
 let nextRpcId = 1;
@@ -1027,7 +1061,7 @@ let currentThread = null;
 let currentTurn = null;
 let isTurnActive = false;
 let currentCwd = "";
-let currentModel = "gpt-5.4";
+let currentModel = "gpt-6.1-sol";
 let modelCatalog = [];
 let projectsList = [];
 let openInApps = [];
@@ -1037,7 +1071,9 @@ let currentSandbox = "workspace-write";
 let mentionedFiles = [];
 let drawerOpen = false;
 let currentDrawerTab = "diff";
+let drawerContentRequest=0,settingsRenderRequest=0,executionModalRevision=0;
 let latestGitStatus = null;
+let latestGitStatusContext = null;
 let activeFloatingMenuKey = null;
 const itemEls = new Map();
 const itemTexts = new Map();
@@ -1051,6 +1087,15 @@ function rpcCall(method, params = {}) {
   return new Promise((resolve, reject) => pendingRpc.set(id, { resolve, reject }));
 }
 
+function captureExecutionUi(){
+  const connection=typeof captureRpcContext==='function'?captureRpcContext():{key:'local',call:rpcCall};
+  return {...connection,cwd:currentCwd,threadId:currentThread,navigation:typeof desktop==='undefined'?0:desktop.navigation};
+}
+function executionUiCurrent(context){
+  try{return context.key===captureExecutionUi().key&&context.cwd===currentCwd&&context.threadId===currentThread&&context.navigation===(typeof desktop==='undefined'?0:desktop.navigation);}catch{return false;}
+}
+function bindExecutionElements(root,context){for(const element of root.querySelectorAll('[data-ui-action]'))element._mcodexExecution=context;}
+
 function maybeDragWindow(e) {
   if (e.target.closest("button, input, textarea, select, a, .pill-badge, .drawer-tab")) return;
   if (e.button === 0) rpcSend({ __window: "drag" });
@@ -1058,6 +1103,80 @@ function maybeDragWindow(e) {
 
 function escapeHtml(s) {
   return String(s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function uiActionAttrs(action, value) {
+  return `data-ui-action="${escapeHtml(action)}" data-ui-value="${escapeHtml(String(value ?? ""))}"`;
+}
+
+function handleUiAction(event) {
+  const element = event.target.closest?.("[data-ui-action]");
+  if (!element) return;
+  const actions = {
+    "open-file": value => openFileInDrawer(value),
+    "preview-file": value => previewWorkspaceFile(value),
+    "mention-file": value => addFileMention(value),
+    "project": value => selectProject(value),
+    "model": value => selectModel(value),
+    "effort": value => selectEffort(value),
+    "sandbox": value => selectSandbox(value),
+    "open-in": value => launchOpenIn(value),
+    "remove-mcp": value => removeMcpServerFromSettings(value),
+    "remove-project": value => removeProjectFromSettings(value),
+    "at-file": value => selectAtFile(value),
+    "slash-command": value => applySlashCmd(value),
+    "remove-mention": value => { if (/^\d+$/.test(value)) removeMention(Number(value)); }
+  };
+  const action = element.getAttribute("data-ui-action");
+  if (!Object.hasOwn(actions, action)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  try {
+    if(element._mcodexExecution&&!executionUiCurrent(element._mcodexExecution))throw new Error('The execution environment changed. Reopen this item in the current environment.');
+    Promise.resolve(actions[action](element.getAttribute("data-ui-value") || "")).catch(reportUiActionError);
+    if (element.hasAttribute("data-ui-close-modal")) closeModal();
+    if (element.hasAttribute("data-ui-close-settings")) closeSettingsView();
+  } catch (error) { reportUiActionError(error); }
+}
+
+function reportUiActionError(error) {
+  if (typeof showError === "function") showError(error);
+  else console.error(error);
+}
+
+// Capture stops expandable file-card headers before their inline click handlers run.
+document.addEventListener("click", handleUiAction, true);
+
+function markdownDestination(href) {
+  // markdown-it has already decoded Markdown entities. Never decode HTML a second time.
+  const destination = String(href || "").trim();
+  if (!destination || /[\x00-\x1f\x7f]/.test(destination)) return null;
+  const localPath = value => {
+    try {
+      const path=decodeURIComponent(value.replace(/#L\d+.*$/, ""));
+      return /[\x00-\x1f\x7f]/.test(path)||path.startsWith("//")||/^(?:javascript|data|vbscript):/i.test(path)?null:path;
+    } catch (_) { return null; }
+  };
+  if (/^file:/i.test(destination)) {
+    try {
+      const url = new URL(destination);
+      if (url.hostname && url.hostname !== "localhost") return null;
+      const path = localPath(url.pathname);
+      return path?.startsWith("/") && !path.startsWith("//") ? { path } : null;
+    } catch (_) { return null; }
+  }
+  if (destination.startsWith("/") && !destination.startsWith("//")) {
+    const path = localPath(destination); return path ? { path } : null;
+  }
+  try {
+    const url = new URL(destination);
+    return ["http:", "https:", "mailto:"].includes(url.protocol) ? { href: destination } : null;
+  } catch (_) {
+    if (!destination.includes(":") && /^(?:\.{1,2}\/|~\/|[^/\\\s?#]+\/|[^/\\\s?#]+\.[^/\\\s?#]+$)/.test(destination)) {
+      const path = localPath(destination); return path ? { path } : null;
+    }
+    return null;
+  }
 }
 
 function baseName(p) {
@@ -1104,71 +1223,134 @@ function formatDurationMs(ms) {
   return `${m}m ${rem}s`;
 }
 
-// Markdown renderer matching ChatGPT.app typography, tables, blockquotes, lists & code blocks
-function renderMarkdown(md) {
-  if (!md) return "";
-  const blocks = [];
-  let text = String(md).replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = blocks.length;
-    const clean = escapeHtml(code.replace(/\n$/, ""));
-    const l = escapeHtml(lang || "text");
-    blocks.push(`<div class="code-block-wrap"><div class="code-block-hdr"><span>${l}</span><button class="code-copy-btn" onclick="copyCodeBlock(this)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button></div><pre class="code-block-pre"><code>${clean}</code></pre></div>`);
-    return `\x00CODEBLOCK_${idx}\x00`;
+// One offline renderer is shared by messages, reasoning and document previews.
+let markdownRenderer;
+function renderMarkdownCode(code, info = "") {
+  const language = info.trim().split(/\s+/)[0] || "text";
+  let rendered = escapeHtml(code);
+  if (code.length <= 65536 && typeof hljs !== "undefined" && hljs.getLanguage(language)) {
+    try { rendered = hljs.highlight(code, { language, ignoreIllegals:true }).value; } catch (_) {}
+  }
+  return `<div class="code-block-wrap"><div class="code-block-hdr"><span>${escapeHtml(language)}</span><button type="button" class="code-copy-btn" onclick="copyCodeBlock(this)" aria-label="Copy code"><span>Copy</span></button></div><pre class="code-block-pre"><code class="hljs">${rendered}</code></pre></div>\n`;
+}
+function renderMarkdownMath(content, displayMode) {
+  if (content.length > 16384 || typeof katex === "undefined") return `<code class="math-source">${escapeHtml(content)}</code>`;
+  try {
+    return katex.renderToString(content, { displayMode, throwOnError:false, strict:"ignore", trust:false, maxExpand:1000, maxSize:20, macros:{}, output:"htmlAndMathml" });
+  } catch (_) { return `<code class="math-source">${escapeHtml(content)}</code>`; }
+}
+function markdownMathPlugin(parser) {
+  const closingAt = (source, delimiter, start, limit) => {
+    let at = source.indexOf(delimiter, start);
+    while (at >= 0 && at < limit) {
+      let slashes = 0; for (let i = at - 1; i >= 0 && source[i] === "\\"; i--) slashes++;
+      if (slashes % 2 === 0) return at;
+      at = source.indexOf(delimiter, at + delimiter.length);
+    }
+    return -1;
+  };
+  parser.inline.ruler.before("escape", "math", (state, silent) => {
+    const at = state.pos, source = state.src;
+    let open, close, display = false;
+    if (source.startsWith("\\(", at)) { open="\\("; close="\\)"; }
+    else if (source.startsWith("\\[", at)) { open="\\["; close="\\]"; display=true; }
+    else if (source.startsWith("$$", at)) { open=close="$$"; display=true; }
+    else if (source[at] === "$" && !/\s/.test(source[at + 1] || " ")) open=close="$";
+    else return false;
+    const end = closingAt(source, close, at + open.length, state.posMax);
+    if (end < 0) return false;
+    const content = source.slice(at + open.length, end);
+    if (!display && (!content || /\n/.test(content) || (open === "$" && /\s$/.test(content)))) return false;
+    if (!silent) { const token=state.push("math_inline", "math", 0); token.content=content; token.meta={display}; }
+    state.pos=end + close.length; return true;
   });
-  text = escapeHtml(text);
-  // Inline code, bold, italic, links
-  text = text.replace(/`([^`\n]+)`/g, `<code class="inline-code">$1</code>`);
-  text = text.replace(/\*\*([^*]+)\*\*/g, `<strong>$1</strong>`);
-  text = text.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, `$1<em>$2</em>`);
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
-    if (href.startsWith("/") || href.startsWith("file://")) {
-      const fpath = href.replace(/^file:\/\//, "").replace(/#L\d+.*$/, "");
-      return `<a href="javascript:void(0)" class="tool-file-link" onclick="openFileInDrawer('${escapeHtml(fpath)}')">${label}</a>`;
+  parser.block.ruler.before("fence", "math_block", (state, startLine, endLine, silent) => {
+    const start=state.bMarks[startLine]+state.tShift[startLine], first=state.src.slice(start,state.eMarks[startLine]);
+    const open=first.startsWith("$$")?"$$":first.startsWith("\\[")?"\\[":null;
+    if (!open || state.sCount[startLine]-state.blkIndent >= 4) return false;
+    const close=open==="$$"?"$$":"\\]";
+    let line=startLine, end=closingAt(first,close,open.length,first.length), content;
+    if (end >= 0) { if (first.slice(end+close.length).trim()) return false; content=first.slice(open.length,end); }
+    else {
+      const lines=[first.slice(open.length)];
+      for (line=startLine+1;line<endLine;line++) {
+        const text=state.src.slice(state.bMarks[line]+state.tShift[line],state.eMarks[line]);
+        end=closingAt(text,close,0,text.length);
+        if (end >= 0 && !text.slice(end+close.length).trim()) { lines.push(text.slice(0,end));break; }
+        lines.push(text);
+      }
+      if (line >= endLine) return false;
+      content=lines.join("\n");
     }
-    return `<a href="${href}" target="_blank" rel="noopener" style="color:var(--blue-300)">${label}</a>`;
+    if (silent) return true;
+    const token=state.push("math_block", "math", 0);token.block=true;token.content=content.trim();token.map=[startLine,line+1];state.line=line+1;return true;
+  }, {alt:["paragraph","reference","blockquote","list"]});
+  parser.renderer.rules.math_inline=(tokens,index)=>renderMarkdownMath(tokens[index].content,tokens[index].meta.display);
+  parser.renderer.rules.math_block=(tokens,index)=>`<div class="markdown-math-block">${renderMarkdownMath(tokens[index].content,true)}</div>\n`;
+}
+function markdownGfmStrikethrough(parser) {
+  // GFM pairs one/two tildes of equal length; runs of three or more stay literal.
+  parser.inline.ruler.at("strikethrough",(state,silent)=>{
+    if (silent||state.src[state.pos]!=="~") return false;
+    const scanned=state.scanDelims(state.pos,true), length=scanned.length;
+    const token=state.push("text","",0);token.content="~".repeat(length);
+    if (length<=2) state.delimiters.push({marker:0x7d+length,length:0,token:state.tokens.length-1,end:-1,open:scanned.can_open,close:scanned.can_close});
+    state.pos+=length;return true;
   });
-
-  const paras = text.split(/\n{2,}/).map(p => {
-    const trimmed = p.trim();
-    if (!trimmed) return "";
-    if (trimmed.includes("\x00CODEBLOCK_") && /^(\x00CODEBLOCK_\d+\x00\s*)+$/.test(trimmed)) return trimmed;
-    if (/^#{1,4} /.test(trimmed) && !trimmed.includes("\n")) {
-      const m = trimmed.match(/^(#{1,4}) (.+)$/);
-      if (m) return `<h${m[1].length}>${m[2]}</h${m[1].length}>`;
-    }
-    if (/^(-{3,}|\*{3,})$/.test(trimmed)) return `<hr/>`;
-    const lines = trimmed.split("\n");
-    // GFM Table
-    if (lines.length >= 2 && lines[0].includes("|") && /^\s*\|?[\s:-]+\|[\s|:-]*$/.test(lines[1])) {
-      const parseRow = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      const headers = parseRow(lines[0]);
-      const rows = lines.slice(2).map(parseRow);
-      return `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-    }
-    // Blockquote
-    if (lines.every(l => /^(&gt;|>)\s?/.test(l))) {
-      return `<blockquote>${lines.map(l => l.replace(/^(&gt;|>)\s?/, "")).join("<br/>")}</blockquote>`;
-    }
-    // Unordered list
-    if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
-      return `<ul>` + lines.map(l => `<li>${l.replace(/^\s*[-*]\s+/, "")}</li>`).join("") + `</ul>`;
-    }
-    // Ordered list
-    if (lines.every(l => /^\s*\d+\.\s+/.test(l))) {
-      return `<ol>` + lines.map(l => `<li>${l.replace(/^\s*\d+\.\s+/, "")}</li>`).join("") + `</ol>`;
-    }
-    // Mixed headings inside paragraph
-    let block = trimmed
-      .replace(/^#### (.+)$/gm, `<h4>$1</h4>`)
-      .replace(/^### (.+)$/gm, `<h3>$1</h3>`)
-      .replace(/^## (.+)$/gm, `<h2>$1</h2>`)
-      .replace(/^# (.+)$/gm, `<h1>$1</h1>`);
-    if (block.startsWith("<h") || block.includes("\x00CODEBLOCK_")) return block;
-    return `<p>${block.replace(/\n/g, "<br/>")}</p>`;
+  parser.inline.ruler2.at("strikethrough",state=>{
+    const process=delimiters=>{
+      for (const start of delimiters) {
+        if ((start.marker!==0x7e&&start.marker!==0x7f)||start.end<0) continue;
+        const end=delimiters[start.end], opening=state.tokens[start.token], closing=state.tokens[end.token];
+        opening.markup=opening.content;opening.type="del_open";opening.tag="del";opening.nesting=1;opening.content="";
+        closing.markup=closing.content;closing.type="del_close";closing.tag="del";closing.nesting=-1;closing.content="";
+      }
+    };
+    process(state.delimiters);for (const meta of state.tokens_meta) if (meta?.delimiters) process(meta.delimiters);
   });
-  let out = paras.filter(Boolean).join("\n");
-  out = out.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, i) => blocks[Number(i)] || "");
-  return out;
+}
+function createMarkdownRenderer() {
+  const parser=markdownit({html:false,linkify:true,typographer:false,breaks:false,maxNesting:100});
+  // Parsing a destination never authorizes navigation: the two renderers below enforce the allowlist.
+  parser.validateLink=()=>true;
+  parser.renderer.rules.link_open=(tokens,index,options,env)=>{
+    const token=tokens[index], target=markdownDestination(token.attrGet("href"));
+    (env.safeLinks ||= []).push(Boolean(target));
+    const title=token.attrGet("title"), extra=title?` title="${escapeHtml(title)}"`:"";
+    if (target?.path) return `<a href="#" class="tool-file-link" ${uiActionAttrs("open-file",target.path)}${extra}>`;
+    if (target?.href) return `<a href="${escapeHtml(target.href)}" target="_blank" rel="noopener noreferrer"${extra}>`;
+    return "";
+  };
+  parser.renderer.rules.link_close=(tokens,index,options,env)=>env.safeLinks?.pop()?"</a>":"";
+  parser.renderer.rules.image=(tokens,index,options,env)=>{
+    const token=tokens[index], target=markdownDestination(token.attrGet("src"));
+    const alt=parser.renderer.renderInlineAsText(token.children||[],options,env);
+    if (!target?.href || !/^https?:/i.test(target.href)) return escapeHtml(alt);
+    return `<img src="${escapeHtml(target.href)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
+  };
+  parser.renderer.rules.code_inline=(tokens,index)=>`<code class="inline-code">${escapeHtml(tokens[index].content)}</code>`;
+  parser.renderer.rules.fence=(tokens,index)=>renderMarkdownCode(tokens[index].content,tokens[index].info);
+  parser.renderer.rules.code_block=(tokens,index)=>renderMarkdownCode(tokens[index].content);
+  parser.renderer.rules.table_open=()=>'<div class="markdown-table-wrap"><table>\n';
+  parser.renderer.rules.table_close=()=>'</table></div>\n';
+  parser.core.ruler.after("inline","task_lists",state=>{
+    for (let i=2;i<state.tokens.length;i++) {
+      const token=state.tokens[i], first=token.children?.[0];
+      if (token.type!=="inline" || state.tokens[i-1].type!=="paragraph_open" || state.tokens[i-2].type!=="list_item_open" || first?.type!=="text") continue;
+      const match=first.content.match(/^\[([ xX])\](?:\s+|$)/);if (!match) continue;
+      first.content=first.content.slice(match[0].length);state.tokens[i-2].attrJoin("class","task-list-item");
+      const checkbox=new state.Token("html_inline","input",0);checkbox.content=`<input type="checkbox" disabled${match[1]!==" "?' checked':''} aria-label="${match[1]!==" "?'Completed':'Not completed'} task"> `;token.children.unshift(checkbox);
+    }
+  });
+  parser.use(markdownGfmStrikethrough).use(markdownMathPlugin);return parser;
+}
+function renderMarkdown(value) {
+  if (!value) return "";
+  const source=String(value);
+  try {
+    if (typeof markdownit!=="function") return `<p>${escapeHtml(source)}</p>`;
+    markdownRenderer ||= createMarkdownRenderer();return markdownRenderer.render(source,{});
+  } catch (_) { return `<pre class="markdown-fallback">${escapeHtml(source)}</pre>`; }
 }
 
 window.copyCodeBlock = function(btn) {
@@ -1426,12 +1608,13 @@ function updateReasoningDom(id, rawText, streaming, durationMs) {
 
 window.openFileInDrawer = async function(path) {
   if (!path) return;
+  const execution=captureExecutionUi();
   drawerOpen = true;
   currentDrawerTab = "files";
   document.getElementById("inspector-drawer").classList.remove("closed");
   document.querySelectorAll(".drawer-tab").forEach(b => b.classList.toggle("active", b.id === "tab-btn-files"));
   await renderDrawerContent();
-  if (typeof previewFile === "function") previewFile(path);
+  if (executionUiCurrent(execution)&&typeof previewWorkspaceFile === "function") previewWorkspaceFile(path);
 };
 
 window.editUserPrompt = function(text) {
@@ -1565,8 +1748,8 @@ function upsertTimelineItem(item) {
         const verb = running ? "Reading" : "Read";
         const filesHtml = actions.map(a => {
           const fname = escapeHtml(a.name || baseName(a.path || ""));
-          const fpath = escapeHtml(a.path || a.name || "");
-          return `<span class="tool-file-link" onclick="event.stopPropagation();openFileInDrawer('${fpath}')" title="${fpath}">${fname}</span>`;
+          const fpath = a.path || a.name || "";
+          return `<span class="tool-file-link" ${uiActionAttrs("open-file", fpath)} title="${escapeHtml(fpath)}">${fname}</span>`;
         }).join(", ");
         labelHtml = `<span class="tool-verb ${running ? "shimmer-text" : ""}">${verb}</span><span class="tool-target">${filesHtml}</span>`;
       } else if (firstAct.type === "search") {
@@ -1609,16 +1792,16 @@ function upsertTimelineItem(item) {
       const stats = computeDiffStats(allDiff);
       const action = first.kind?.type === "add" ? "Created" : first.kind?.type === "delete" ? "Deleted" : "Edited";
       const fileLabel = changes.map(c => c.path).join(", ") || "files";
-      const fpath = escapeHtml(first.path || fileLabel);
+      const fpath = first.path || fileLabel;
       hdr.innerHTML = `<span class="tool-inline-icon">${ICONS.diff}</span>
         <span class="tool-verb ${running ? "shimmer-text" : ""}">${action}</span>
-        <span class="tool-target mono tool-file-link" onclick="event.stopPropagation();openFileInDrawer('${fpath}')">${escapeHtml(fileLabel)}</span>
+        <span class="tool-target mono tool-file-link" ${uiActionAttrs("open-file", fpath)}>${escapeHtml(fileLabel)}</span>
         <span class="diff-stat-add">+${stats.added}</span>
         <span class="diff-stat-del">-${stats.deleted}</span>
         ${CHEV_SVG}`;
       drawer.innerHTML = `<div class="tool-diff-hdr">
           <div class="tool-diff-hdr-left">
-            <span class="tool-file-link" onclick="openFileInDrawer('${fpath}')">${escapeHtml(fileLabel)}</span>
+            <span class="tool-file-link" ${uiActionAttrs("open-file", fpath)}>${escapeHtml(fileLabel)}</span>
             <span class="diff-stat-add">+${stats.added}</span>
             <span class="diff-stat-del">-${stats.deleted}</span>
           </div>
@@ -1679,7 +1862,7 @@ const FOLDER_SVG = `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.75 
 
 function updateModelAndEffortUI() {
   const mObj = modelCatalog.find(m => m.model === currentModel);
-  document.getElementById("model-pill-text").textContent = mObj ? (mObj.displayName || mObj.model) : currentModel;
+  document.getElementById("model-pill-text").textContent = mObj ? (typeof modelName==='function'?modelName(mObj):mObj.displayName || mObj.model) : currentModel;
   document.getElementById("effort-pill-text").textContent = EFFORT_LABELS[currentEffort] || currentEffort;
   const fb = document.getElementById("fast-badge");
   if (fb) fb.style.display = fastMode ? "inline" : "none";
@@ -1828,7 +2011,7 @@ function renderComposerChips() {
   mentionedFiles.forEach((f, idx) => {
     const chip = document.createElement("span");
     chip.className = "context-chip";
-    chip.innerHTML = `<span>@${escapeHtml(f)}</span><button onclick="removeMention(${idx})">✕</button>`;
+    chip.innerHTML = `<span>@${escapeHtml(f)}</span><button ${uiActionAttrs("remove-mention", idx)}>✕</button>`;
     wrap.appendChild(chip);
   });
 }
@@ -1925,14 +2108,14 @@ document.addEventListener("mousedown", e => {
 
 async function toggleProjectPicker(e) {
   e.stopPropagation();
-  const anchor = e.currentTarget;
-  await refreshProjects();
+  const anchor = e.currentTarget,execution=captureExecutionUi();
+  await refreshProjects();if(!executionUiCurrent(execution))return;
   const renderList = (filterText = "") => {
     const q = filterText.toLowerCase();
     const filtered = projectsList.filter(p => (p.label || "").toLowerCase().includes(q) || (p.path || "").toLowerCase().includes(q));
     return filtered.map(p => {
       const active = p.path === currentCwd;
-      return `<button class="menu-item ${active ? "active" : ""}" onclick="selectProject('${escapeHtml(p.path)}')">
+      return `<button class="menu-item ${active ? "active" : ""}" ${uiActionAttrs("project", p.path)}>
         <div class="menu-item-left">${FOLDER_SVG}
           <div class="menu-item-text">
             <span class="menu-item-title">${escapeHtml(p.label || baseName(p.path))}</span>
@@ -1955,11 +2138,12 @@ async function toggleProjectPicker(e) {
       </div>
     </button>`;
   openFloatingMenuAt("project", anchor, html, anchor.id === "project-pill-btn");
+  bindExecutionElements(document.getElementById("floating-menu"),execution);
   const inp = document.getElementById("proj-picker-search");
   if (inp) {
     inp.oninput = () => {
       const box = document.getElementById("proj-picker-items");
-      if (box) box.innerHTML = renderList(inp.value);
+      if (box){box.innerHTML = renderList(inp.value);bindExecutionElements(box,execution);}
     };
     inp.focus();
   }
@@ -1968,8 +2152,9 @@ async function toggleProjectPicker(e) {
 window.selectProject = async function(path) {
   closeFloatingMenu();
   if (!path) return;
-  await rpcCall("projects/create", { path, createDir: false });
-  updateCwdUI(path);
+  const execution=captureExecutionUi();
+  await execution.call("projects/create", { path, createDir: false });
+  if(!executionUiCurrent(execution))return;updateCwdUI(path);
   await newThread();
 };
 
@@ -1978,7 +2163,7 @@ function toggleModelPicker(e) {
   const anchor = e.currentTarget;
   const itemsHtml = modelCatalog.map(m => {
     const active = m.model === currentModel;
-    return `<button class="menu-item ${active ? "active" : ""}" onclick="selectModel('${escapeHtml(m.model)}')">
+    return `<button class="menu-item ${active ? "active" : ""}" ${uiActionAttrs("model", m.model)}>
       <div class="menu-item-left">
         <svg viewBox="0 0 20 20" fill="currentColor"><path d="M11.983 1.907a.75.75 0 0 0-1.292-.657l-8.5 9.5A.75.75 0 0 0 2.75 12h6.572l-1.305 6.093a.75.75 0 0 0 1.292.657l8.5-9.5A.75.75 0 0 0 17.25 8h-6.572l1.305-6.093Z"/></svg>
         <div class="menu-item-text">
@@ -1997,7 +2182,7 @@ function toggleModelPicker(e) {
       <div class="menu-item-left">
         <span style="font-size:14px">⚡</span>
         <div class="menu-item-text">
-          <span class="menu-item-title">Fast mode (service_tier = fast)</span>
+          <span class="menu-item-title">Fast mode</span>
           <span class="menu-item-desc">Prioritize lower latency responses</span>
         </div>
       </div>
@@ -2035,13 +2220,12 @@ function toggleEffortPicker(e) {
     { reasoningEffort: "low", label: "Light", description: "Fast responses for straightforward tasks" },
     { reasoningEffort: "medium", label: "Medium", description: "Balanced speed and reasoning depth (Default)" },
     { reasoningEffort: "high", label: "High", description: "Deep reasoning for complex architecture & bugs" },
-    { reasoningEffort: "xhigh", label: "Extra High", description: "Maximum multi-step reasoning effort" },
-    { reasoningEffort: "persistent", label: "Persistent", description: "Sustained autonomous reasoning across long tasks" }
+    { reasoningEffort: "xhigh", label: "Extra High", description: "Maximum multi-step reasoning effort" }
   ];
   const html = `<div class="menu-section-title">Select reasoning effort</div>` +
     efforts.map(ef => {
       const active = ef.reasoningEffort === currentEffort;
-      return `<button class="menu-item ${active ? "active" : ""}" onclick="selectEffort('${escapeHtml(ef.reasoningEffort)}')">
+      return `<button class="menu-item ${active ? "active" : ""}" ${uiActionAttrs("effort", ef.reasoningEffort)}>
         <div class="menu-item-left">
           <div class="menu-item-text">
             <span class="menu-item-title">${escapeHtml(ef.label || EFFORT_LABELS[ef.reasoningEffort] || ef.reasoningEffort)}</span>
@@ -2072,7 +2256,7 @@ function toggleSandboxPicker(e) {
   const html = `<div class="menu-section-title">Sandbox permissions</div>` +
     opts.map(o => {
       const active = o.id === currentSandbox;
-      return `<button class="menu-item ${active ? "active" : ""}" onclick="selectSandbox('${o.id}')">
+      return `<button class="menu-item ${active ? "active" : ""}" ${uiActionAttrs("sandbox", o.id)}>
         <div class="menu-item-left">
           ${SANDBOX_ICONS[o.id]}
           <div class="menu-item-text">
@@ -2101,7 +2285,7 @@ async function toggleOpenInMenu(e) {
     openInApps = r.apps || [];
   }
   const html = `<div class="menu-section-title">Open ${escapeHtml(baseName(currentCwd))} in…</div>` +
-    openInApps.map(a => `<button class="menu-item" onclick="launchOpenIn('${escapeHtml(a.id)}')">
+    openInApps.map(a => `<button class="menu-item" ${uiActionAttrs("open-in", a.id)}>
       <div class="menu-item-left">
         <span class="menu-item-title">${escapeHtml(a.label)}</span>
       </div>
@@ -2158,10 +2342,12 @@ function switchDrawerTab(tab) {
 }
 
 async function renderDrawerContent() {
+  const execution=captureExecutionUi(),ticket=++drawerContentRequest,tab=currentDrawerTab;
+  const current=()=>ticket===drawerContentRequest&&tab===currentDrawerTab&&executionUiCurrent(execution);
   const box = document.getElementById("drawer-content");
   if (currentDrawerTab === "diff") {
-    const st = latestGitStatus || await rpcCall("workspace/gitStatus", { cwd: currentCwd || undefined });
-    latestGitStatus = st;
+    const st = (latestGitStatusContext===execution.key+'\0'+execution.cwd?latestGitStatus:null) || await execution.call("workspace/gitStatus", { cwd: execution.cwd || undefined });
+    if(!current())return;latestGitStatus = st;latestGitStatusContext=execution.key+'\0'+execution.cwd;
     const files = st.changedFiles || [];
     if (files.length === 0 && !st.diff) {
       box.innerHTML = `<div style="color:var(--text-tertiary);padding:24px 8px;text-align:center">Working tree clean · No uncommitted changes</div>`;
@@ -2178,12 +2364,12 @@ async function renderDrawerContent() {
       ${listHtml}
       <div class="code-block-wrap" style="margin-top:10px"><pre class="code-block-pre" style="font-size:11.5px;white-space:pre-wrap">${renderColoredDiff(st.diff || "")}</pre></div>`;
   } else if (currentDrawerTab === "files") {
-    const res = await rpcCall("fs/readDirectory", { cwd: currentCwd || undefined, query: "" });
-    const files = res.files || [];
+    const res = await execution.call("fs/readDirectory", { cwd: execution.cwd || undefined, query: "" });
+    if(!current())return;const files = res.files || [];
     box.innerHTML = `<div style="margin-bottom:8px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px">${escapeHtml(res.cwd || currentCwd)}</div>` +
-      files.map(f => `<div class="ac-item" onclick="previewWorkspaceFile('${escapeHtml(f.path)}')">
+      files.map(f => `<div class="ac-item" ${uiActionAttrs("preview-file", f.path)}>
         <span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(f.path)}</span>
-        <button class="thread-act-btn" title="Mention @file" onclick="event.stopPropagation();addFileMention('${escapeHtml(f.path)}')">@</button>
+        <button class="thread-act-btn" title="Mention @file" ${uiActionAttrs("mention-file", f.path)}>@</button>
       </div>`).join("");
   } else if (currentDrawerTab === "terminal") {
     box.innerHTML = `<div style="display:flex;gap:6px;margin-bottom:10px">
@@ -2191,20 +2377,25 @@ async function renderDrawerContent() {
         <button class="btn-pill primary" onclick="execQuickCmd()">Run</button>
       </div>
       <pre id="quick-cmd-out" class="code-block-pre" style="background:var(--code-bg);border-radius:10px;border:1px solid var(--border-subtle);min-height:220px;white-space:pre-wrap">Ready in ${escapeHtml(currentCwd || ".")}</pre>`;
+    document.getElementById("quick-cmd-out")._mcodexExecution=execution;
     const inp = document.getElementById("quick-cmd-input");
     inp?.addEventListener("keydown", e => { if (e.key === "Enter") execQuickCmd(); });
     inp?.focus();
   }
+  bindExecutionElements(box,execution);
 }
 
 window.previewWorkspaceFile = async function(relPath) {
+  const execution=captureExecutionUi(),modal=executionModalRevision;
   try {
-    const r = await rpcCall("fs/readFile", { cwd: currentCwd || undefined, path: relPath });
+    const r = await execution.call("fs/readFile", { cwd: execution.cwd || undefined, path: relPath });
+    if(!executionUiCurrent(execution)||modal!==executionModalRevision)return;
     openCustomModal(relPath, `<div style="display:flex;justify-content:flex-end;margin-bottom:6px">
-        <button class="btn-pill primary" onclick="addFileMention('${escapeHtml(relPath)}');closeModal()">@ Mention in Composer</button>
+        <button class="btn-pill primary" ${uiActionAttrs("mention-file", relPath)} data-ui-close-modal>@ Mention in Composer</button>
       </div>
       <pre class="code-block-pre" style="background:var(--code-bg);border-radius:10px;border:1px solid var(--border-subtle);max-height:55vh;overflow:auto">${escapeHtml(r.content || "")}</pre>`);
-  } catch (e) {}
+    bindExecutionElements(document.getElementById("modal-body"),execution);
+  } catch (e) {reportUiActionError(e);}
 };
 
 window.addFileMention = function(relPath) {
@@ -2219,19 +2410,23 @@ window.execQuickCmd = async function() {
   const out = document.getElementById("quick-cmd-out");
   const cmd = inp?.value?.trim();
   if (!cmd) return;
+  const execution=out._mcodexExecution||captureExecutionUi();if(!executionUiCurrent(execution))throw new Error("The execution environment changed. Reopen Terminal.");
   out.textContent = `$ ${cmd}\nRunning...`;
-  const r = await rpcCall("command/exec", { cwd: currentCwd || undefined, command: cmd });
+  const r = await execution.call("command/exec", { cwd: execution.cwd || undefined, command: cmd, sandbox: currentSandbox });
+  if(!executionUiCurrent(execution)||document.getElementById("quick-cmd-out")!==out)return;
   out.textContent = `$ ${cmd} (exit ${r.exitCode})\n\n${r.output || ""}`;
   refreshGitStatus();
 };
 
 // Modals & Create/Add Project Dialog (matching create-project-dialog-96f00b3e01aa.js)
 function openCustomModal(title, html) {
+  executionModalRevision++;
   document.getElementById("modal-title").textContent = title;
   document.getElementById("modal-body").innerHTML = html;
   document.getElementById("modal-backdrop").classList.add("open");
 }
 function closeModal() {
+  executionModalRevision++;
   document.getElementById("modal-backdrop").classList.remove("open");
 }
 
@@ -2283,8 +2478,9 @@ function openCreateProjectDialog(initialTab = "existing") {
 }
 
 window.pickNativeFolderForInput = async function(inputId) {
-  const r = await rpcCall("projects/pickFolder", {});
-  if (r.path) {
+  const execution=captureExecutionUi(),input=document.getElementById(inputId);
+  const r = await execution.call("projects/pickFolder", {});
+  if (r.path&&executionUiCurrent(execution)&&document.getElementById(inputId)===input) {
     const el = document.getElementById(inputId);
     if (el) {
       el.value = r.path;
@@ -2304,9 +2500,9 @@ window.submitAddExistingProject = async function() {
   const path = document.getElementById("proj-existing-path")?.value?.trim();
   const label = document.getElementById("proj-existing-label")?.value?.trim();
   if (!path) return;
-  closeModal();
-  await rpcCall("projects/create", { path, label: label || undefined, createDir: false });
-  updateCwdUI(path);
+  const execution=captureExecutionUi();closeModal();
+  await execution.call("projects/create", { path, label: label || undefined, createDir: false });
+  if(!executionUiCurrent(execution))return;updateCwdUI(path);
   await newThread();
 };
 
@@ -2316,9 +2512,9 @@ window.submitCreateNewProject = async function() {
   const initGit = !!document.getElementById("proj-new-git")?.checked;
   if (!name || !parent) return;
   const fullPath = `${parent}/${name}`;
-  closeModal();
-  await rpcCall("projects/create", { path: fullPath, label: name, createDir: true, initGit });
-  updateCwdUI(fullPath);
+  const execution=captureExecutionUi();closeModal();
+  await execution.call("projects/create", { path: fullPath, label: name, createDir: true, initGit });
+  if(!executionUiCurrent(execution))return;updateCwdUI(fullPath);
   await newThread();
 };
 
@@ -2336,6 +2532,7 @@ async function openSettingsView(sec = "general") {
 }
 
 function closeSettingsView() {
+  settingsRenderRequest++;
   const sv = document.getElementById("settings-view");
   if (!sv.classList.contains("open")) return;
   sv.classList.remove("open");
@@ -2346,18 +2543,22 @@ function closeSettingsView() {
 }
 
 async function renderSettingsSection(sec) {
+  const execution=captureExecutionUi(),ticket=++settingsRenderRequest;
+  const current=()=>ticket===settingsRenderRequest&&sec===currentSettingsSection&&executionUiCurrent(execution);
   currentSettingsSection = sec;
   document.querySelectorAll(".settings-nav-btn").forEach(b => {
     b.classList.toggle("active", b.getAttribute("data-sec") === sec);
   });
   const box = document.getElementById("settings-body");
-  const st = await rpcCall("settings/read", { cwd: currentCwd || undefined });
+  const st = await execution.call("settings/read", { cwd: execution.cwd || undefined });
+  if(!current())return;box._mcodexExecution=execution;
 
   if (sec === "general") {
-    const apps = openInApps.length ? openInApps : ((await rpcCall("openIn/list", {})).apps || []);
+    const apps = openInApps.length ? openInApps : ((await rpcCall("openIn/list", {})).targets || []);
+    if(!current())return;
     openInApps = apps;
     box.innerHTML = `<h1 class="settings-h1">General</h1>
-      <div class="settings-sub">Configure default editor, terminal, and workspace behavior shared with <code>~/.codex/</code>.</div>
+      <div class="settings-sub">Choose your editor, terminal and workspace folder.</div>
       <div class="settings-card">
         <div class="settings-row">
           <div>
@@ -2394,7 +2595,7 @@ async function renderSettingsSection(sec) {
       </div>`;
   } else if (sec === "configuration") {
     box.innerHTML = `<h1 class="settings-h1">Configuration</h1>
-      <div class="settings-sub">Default model, reasoning effort, fast mode, and sandbox policy stored in <code>~/.codex/config.toml</code>.</div>
+      <div class="settings-sub">Default model, reasoning effort, fast mode, and sandbox policy stored in <code>~/.mcodex/config.toml</code>.</div>
       <div class="settings-card">
         <div class="settings-row">
           <div>
@@ -2416,7 +2617,7 @@ async function renderSettingsSection(sec) {
         </div>
         <div class="settings-row">
           <div>
-            <div class="settings-row-label">Fast Mode (service_tier = fast)</div>
+            <div class="settings-row-label">Fast mode</div>
             <div class="settings-row-desc">Prioritize lower-latency token generation</div>
           </div>
           <button class="btn-pill ${fastMode ? "primary" : ""}" onclick="toggleFastMode();renderSettingsSection('configuration')">${fastMode ? "Enabled ⚡" : "Disabled"}</button>
@@ -2434,7 +2635,7 @@ async function renderSettingsSection(sec) {
         </div>
       </div>
       <div class="settings-card">
-        <div class="settings-row-label">Raw <code>~/.codex/config.toml</code></div>
+        <div class="settings-row-label">Raw <code>~/.mcodex/config.toml</code></div>
         <textarea id="raw-config-toml" class="modal-input" style="min-height:180px;resize:vertical">${escapeHtml(st.rawConfigToml || "")}</textarea>
         <div style="display:flex;justify-content:flex-end">
           <button class="btn-pill primary" onclick="saveRawConfigToml()">Save config.toml</button>
@@ -2455,7 +2656,7 @@ async function renderSettingsSection(sec) {
   } else if (sec === "mcp") {
     const servers = st.mcpServers || [];
     box.innerHTML = `<h1 class="settings-h1">MCP Servers</h1>
-      <div class="settings-sub">Model Context Protocol servers configured in <code>~/.codex/config.toml</code>.</div>
+      <div class="settings-sub">Model Context Protocol servers configured in <code>~/.mcodex/config.toml</code>.</div>
       <div class="settings-card">
         <div class="settings-row-label">Add New MCP Server</div>
         <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px">
@@ -2470,11 +2671,12 @@ async function renderSettingsSection(sec) {
             <div class="settings-row-label">${escapeHtml(s.name)} <span style="color:var(--green-400);font-size:11px">● configured</span></div>
             <div class="settings-row-desc" style="font-family:var(--font-mono)">${escapeHtml(s.command || s.url || "")} ${escapeHtml((s.args || []).join(" "))}</div>
           </div>
-          <button class="btn-pill danger" onclick="removeMcpServerFromSettings('${escapeHtml(s.name)}')">Remove</button>
+          <button class="btn-pill danger" ${uiActionAttrs("remove-mcp", s.name)}>Remove</button>
         </div>
       </div>`).join("") || `<div style="color:var(--text-tertiary)">No MCP servers configured.</div>`}`;
   } else if (sec === "skills") {
-    const r = await rpcCall("skills/list", {});
+    const r = await execution.call("skills/list", {});
+    if(!current())return;
     const list = r.data || [];
     box.innerHTML = `<h1 class="settings-h1">Skills &amp; Plugins</h1>
       <div class="settings-sub">Installed plugins and skills discovered in <code>~/.codex/plugins</code> and <code>~/.codex/skills</code>.</div>
@@ -2506,7 +2708,7 @@ async function renderSettingsSection(sec) {
         <h1 class="settings-h1" style="margin:0">Projects &amp; Environments</h1>
         <button class="btn-pill primary" onclick="openCreateProjectDialog('existing')">+ Add or Create Project</button>
       </div>
-      <div class="settings-sub">Projects shared between ChatGPT.app and mcodex via <code>~/.codex/.codex-global-state.json</code>.</div>
+      <div class="settings-sub">Projects registered on this computer.</div>
       ${projectsList.map(p => `<div class="settings-card">
         <div class="settings-row">
           <div>
@@ -2514,15 +2716,16 @@ async function renderSettingsSection(sec) {
             <div class="settings-row-desc" style="font-family:var(--font-mono)">${escapeHtml(p.path)} · trust: ${escapeHtml(p.trustLevel)}</div>
           </div>
           <div style="display:flex;gap:6px">
-            <button class="btn-pill" onclick="selectProject('${escapeHtml(p.path)}');closeSettingsView()">Switch</button>
-            <button class="btn-pill danger" onclick="removeProjectFromSettings('${escapeHtml(p.path)}')">Remove</button>
+            <button class="btn-pill" ${uiActionAttrs("project", p.path)} data-ui-close-settings>Switch</button>
+            <button class="btn-pill danger" ${uiActionAttrs("remove-project", p.path)}>Remove</button>
           </div>
         </div>
       </div>`).join("")}`;
   } else if (sec === "account") {
     const acc = await rpcCall("account/read", {});
+    if(!current())return;
     box.innerHTML = `<h1 class="settings-h1">Account</h1>
-      <div class="settings-sub">Authentication credentials loaded from <code>~/.codex/auth.json</code>.</div>
+      <div class="settings-sub">Authentication credentials loaded from <code>~/.mcodex/auth.json</code>.</div>
       <div class="settings-card">
         <div class="settings-row">
           <div>
@@ -2535,33 +2738,38 @@ async function renderSettingsSection(sec) {
   }
 }
 
+function settingsExecution(){const context=document.getElementById("settings-body")._mcodexExecution||captureExecutionUi();if(!executionUiCurrent(context))throw new Error("The execution environment changed. Reopen Settings.");return context;}
 window.saveRawConfigToml = async function() {
+  const execution=settingsExecution();
   const rawConfigToml = document.getElementById("raw-config-toml")?.value;
   if (rawConfigToml !== undefined) {
-    await rpcCall("settings/write", { rawConfigToml });
-    await renderSettingsSection("configuration");
+    await execution.call("settings/write", { rawConfigToml });
+    if(executionUiCurrent(execution)&&typeof refreshModelCatalog==='function')await refreshModelCatalog(false,true);
+    if(executionUiCurrent(execution))await renderSettingsSection("configuration");
   }
 };
 
 window.saveAgentsMd = async function() {
+  const execution=settingsExecution();
   const globalAgentsMd = document.getElementById("global-agents-md")?.value;
   const projectAgentsMd = document.getElementById("project-agents-md")?.value;
-  await rpcCall("settings/write", { cwd: currentCwd || undefined, globalAgentsMd, projectAgentsMd });
-  await renderSettingsSection("personalization");
+  await execution.call("settings/write", { cwd: execution.cwd || undefined, globalAgentsMd, projectAgentsMd });
+  if(executionUiCurrent(execution))await renderSettingsSection("personalization");
 };
 
 window.addMcpServerFromSettings = async function() {
+  const execution=settingsExecution();
   const name = document.getElementById("mcp-new-name")?.value?.trim();
   const cmdLine = document.getElementById("mcp-new-cmd")?.value?.trim();
   if (!name || !cmdLine) return;
   const parts = cmdLine.split(/\s+/);
-  await rpcCall("mcp/addServer", { name, command: parts[0], args: parts.slice(1) });
-  await renderSettingsSection("mcp");
+  await execution.call("mcp/addServer", { name, command: parts[0], args: parts.slice(1) });
+  if(executionUiCurrent(execution))await renderSettingsSection("mcp");
 };
 
 window.removeMcpServerFromSettings = async function(name) {
-  await rpcCall("mcp/removeServer", { name });
-  await renderSettingsSection("mcp");
+  const execution=settingsExecution();await execution.call("mcp/removeServer", { name });
+  if(executionUiCurrent(execution))await renderSettingsSection("mcp");
 };
 
 window.removeProjectFromSettings = async function(path) {
@@ -2583,6 +2791,7 @@ function closeAutocomplete() {
 }
 
 async function handleComposerInput() {
+  const execution=captureExecutionUi();
   autoResizeInput();
   const inp = document.getElementById("composer-input");
   const val = inp.value;
@@ -2597,7 +2806,7 @@ async function handleComposerInput() {
       { cmd: "/clear", desc: "Clear current thread view" }
     ].filter(c => c.cmd.includes(q));
     if (cmds.length > 0) {
-      pop.innerHTML = cmds.map(c => `<div class="ac-item" onclick="applySlashCmd('${c.cmd}')">
+      pop.innerHTML = cmds.map(c => `<div class="ac-item" ${uiActionAttrs("slash-command", c.cmd)}>
         <strong>${c.cmd}</strong><span class="ac-item-sub">${c.desc}</span>
       </div>`).join("");
       pop.classList.add("open");
@@ -2608,14 +2817,14 @@ async function handleComposerInput() {
   const atMatch = val.match(/(?:^|\s)@([^\s]*)$/);
   if (atMatch) {
     const query = atMatch[1];
-    const r = await rpcCall("fs/readDirectory", { cwd: currentCwd || undefined, query });
-    const files = (r.files || []).slice(0, 12);
+    const r = await execution.call("fs/readDirectory", { cwd: execution.cwd || undefined, query });
+    if(!executionUiCurrent(execution)||inp.value!==val)return;const files = (r.files || []).slice(0, 12);
     if (files.length > 0) {
-      pop.innerHTML = files.map(f => `<div class="ac-item" onclick="selectAtFile('${escapeHtml(f.path)}')">
+      pop.innerHTML = files.map(f => `<div class="ac-item" ${uiActionAttrs("at-file", f.path)}>
         <span style="font-family:var(--font-mono)">${escapeHtml(f.path)}</span>
         <span class="ac-item-sub">mention</span>
       </div>`).join("");
-      pop.classList.add("open");
+      bindExecutionElements(pop,execution);pop.classList.add("open");
       return;
     }
   }
@@ -2646,6 +2855,7 @@ function autoResizeInput() {
 const composerEl = document.getElementById("composer-input");
 composerEl.addEventListener("input", handleComposerInput);
 composerEl.addEventListener("keydown", e => {
+  if(e.isComposing || e.keyCode === 229)return;
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     handleSubmitOrStop();
@@ -2672,38 +2882,7 @@ window.addEventListener("keydown", e => {
   }
 });
 
-(async function boot() {
-  updateSandboxUI();
-  await rpcCall("initialize", { clientInfo: { name: "mcodex-app", version: "0.2.0" } });
-  rpcSend({ method: "initialized" });
-
-  const m = await rpcCall("model/list", {});
-  if (m.data && m.data.length > 0) {
-    modelCatalog = m.data;
-    currentModel = m.defaultModel || m.data[0].model;
-    currentEffort = m.defaultReasoningEffort || "medium";
-    fastMode = m.serviceTier === "fast";
-    updateModelAndEffortUI();
-  }
-
-  const st = await rpcCall("settings/read", {});
-  if (st.sandboxMode) {
-    currentSandbox = st.sandboxMode;
-    updateSandboxUI();
-  }
-
-  const acc = await rpcCall("account/read", {});
-  if (acc.account?.type === "chatgpt") {
-    document.getElementById("account-label").textContent = "ChatGPT Plus / Pro";
-    document.getElementById("account-sub").textContent = "Settings · Codex OAuth";
-  } else if (acc.account?.type === "apiKey") {
-    document.getElementById("account-label").textContent = "OpenAI API Key";
-    document.getElementById("account-sub").textContent = "Settings · Direct API";
-  }
-
-  await refreshThreads();
-  await newThread();
-})();
+// DESKTOP_SCRIPT
 </script>
 </body>
 </html>

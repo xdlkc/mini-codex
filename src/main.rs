@@ -1,15 +1,31 @@
+mod account;
 mod agent;
 mod api;
 mod appserver;
+mod attachments;
 mod auth;
 mod config;
+mod desktop;
+mod document_ai;
+mod document_export;
+mod documents;
+mod goals;
 mod gui;
+mod images;
 mod mcp;
+mod models;
 mod patch;
 mod plugin;
+mod preview;
+mod remote;
+mod scheduler;
 mod session;
+mod stream_display;
 mod tools;
 mod tui;
+mod voice;
+mod web_search;
+mod workspaces;
 
 use agent::{Agent, Event};
 use anyhow::Result;
@@ -21,7 +37,11 @@ use tokio::sync::{mpsc::unbounded_channel, Mutex};
 use tools::{Sandbox, ToolCtx};
 
 #[derive(Parser)]
-#[command(name = "mcodex", version, about = "Rust re-implementation of the Codex CLI + App")]
+#[command(
+    name = "mcodex",
+    version,
+    about = "Rust re-implementation of the Codex CLI + App"
+)]
 struct Cli {
     /// Model name (default: config.toml `model`, else gpt-5)
     #[arg(short, long, global = true)]
@@ -47,6 +67,11 @@ enum Cmd {
     Exec { prompt: String },
     /// Launch the desktop GUI application (native macOS WebKit window driving app-server)
     App,
+    /// Preview the desktop UI with the real Rust backend on loopback
+    Preview {
+        #[arg(long, default_value_t = 5173)]
+        port: u16,
+    },
     /// Run the Codex JSON-RPC app-server over stdio
     AppServer {
         /// Transport endpoint (stdio:// supported)
@@ -85,10 +110,17 @@ const BASE_INSTRUCTIONS: &str = "You are a coding agent running in a terminal. B
 Use the `shell` tool to inspect the project and run commands, and `apply_patch` to edit files. \
 Keep going until the user's task is fully resolved.";
 
-pub fn build_instructions(cfg: &config::Config, plugins: &[plugin::Plugin], cwd: &std::path::Path) -> String {
+pub fn build_instructions(
+    cfg: &config::Config,
+    plugins: &[plugin::Plugin],
+    cwd: &std::path::Path,
+) -> String {
     let mut s = BASE_INSTRUCTIONS.to_string();
     if let Some(i) = &cfg.instructions {
         s.push_str(&format!("\n\n{i}"));
+    }
+    if let Ok(global) = std::fs::read_to_string(config::home().join("AGENTS.md")) {
+        s.push_str(&format!("\n\n# Global instructions\n{global}"));
     }
     for p in plugins {
         if let Some(i) = &p.instructions {
@@ -138,9 +170,10 @@ fn main() -> Result<()> {
         .collect();
     let cli = Cli::parse_from(filtered_args);
     let cfg = config::Config::load();
-    let mut cwd = cli.cd.clone().unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let mut cwd = cli
+        .cd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     if cli.cd.is_none() && cwd == std::path::Path::new("/") {
         if let Some(home) = std::env::var_os("HOME") {
             cwd = PathBuf::from(home);
@@ -151,9 +184,18 @@ fn main() -> Result<()> {
         Some("danger-full-access") => Sandbox::DangerFullAccess,
         _ => Sandbox::WorkspaceWrite,
     });
-    let model = cli.model.clone().or(cfg.model.clone()).unwrap_or_else(|| "gpt-5".into());
+    let model = cli
+        .model
+        .clone()
+        .or(cfg.model.clone())
+        .unwrap_or_else(|| models::DEFAULT_MODEL.into());
 
-    let auto_gui = cli.command.is_none()
+    #[cfg(not(feature = "desktop"))]
+    if matches!(cli.command, Some(Cmd::App)) {
+        anyhow::bail!("Desktop support is disabled in this headless agent. Use app-server, exec or preview; rebuild with --features desktop to open a native window.");
+    }
+    let auto_gui = cfg!(feature = "desktop")
+        && cli.command.is_none()
         && cli.prompt.is_none()
         && (is_launched_as_app_bundle()
             || (!std::io::stdout().is_terminal() && !std::io::stdin().is_terminal()));
@@ -162,7 +204,6 @@ fn main() -> Result<()> {
     if matches!(cli.command, Some(Cmd::App)) || auto_gui {
         let rt = tokio::runtime::Runtime::new()?;
         let mcp = rt.block_on(mcp::Mcp::start(&cfg.mcp_servers));
-        drop(rt);
         let shared = appserver::Shared {
             cfg,
             default_model: model,
@@ -171,13 +212,36 @@ fn main() -> Result<()> {
             yolo: cli.yolo,
             mcp: Arc::new(mcp),
         };
-        return gui::launch(shared);
+        let result = gui::launch(shared);
+        drop(rt);
+        return result;
     }
 
     tokio::runtime::Runtime::new()?.block_on(async_main(cli, cfg, cwd, sandbox, model))
 }
 
-async fn async_main(cli: Cli, cfg: config::Config, cwd: PathBuf, sandbox: Sandbox, model: String) -> Result<()> {
+async fn async_main(
+    cli: Cli,
+    cfg: config::Config,
+    cwd: PathBuf,
+    sandbox: Sandbox,
+    model: String,
+) -> Result<()> {
+    if let Some(Cmd::Preview { port }) = &cli.command {
+        let mcp = Arc::new(mcp::Mcp::start(&cfg.mcp_servers).await);
+        return preview::serve(
+            appserver::Shared {
+                cfg,
+                default_model: model,
+                default_sandbox: sandbox,
+                default_cwd: cwd,
+                yolo: cli.yolo,
+                mcp,
+            },
+            *port,
+        )
+        .await;
+    }
     match &cli.command {
         Some(Cmd::Login { with_api_key }) => {
             match with_api_key {
@@ -187,7 +251,14 @@ async fn async_main(cli: Cli, cfg: config::Config, cwd: PathBuf, sandbox: Sandbo
             return Ok(());
         }
         Some(Cmd::Logout) => {
-            println!("{}", if auth::logout()? { "Logged out." } else { "No stored credentials." });
+            println!(
+                "{}",
+                if auth::logout()? {
+                    "Logged out."
+                } else {
+                    "No stored credentials."
+                }
+            );
             return Ok(());
         }
         Some(Cmd::Sessions) => {
@@ -199,7 +270,11 @@ async fn async_main(cli: Cli, cfg: config::Config, cwd: PathBuf, sandbox: Sandbo
         Some(Cmd::Mcp { .. }) => {
             let m = mcp::Mcp::start(&cfg.mcp_servers).await;
             for t in &m.tools {
-                println!("{}  {}", t.qualified(), t.description.lines().next().unwrap_or(""));
+                println!(
+                    "{}  {}",
+                    t.qualified(),
+                    t.description.lines().next().unwrap_or("")
+                );
             }
             for f in &m.failures {
                 eprintln!("failed: {f}");
@@ -235,7 +310,14 @@ async fn async_main(cli: Cli, cfg: config::Config, cwd: PathBuf, sandbox: Sandbo
     }
     let is_exec = matches!(cli.command, Some(Cmd::Exec { .. }));
     let instructions = build_instructions(&cfg, &plugins, &cwd);
-    let ctx = ToolCtx { cwd: cwd.clone(), sandbox, auto_approve: cli.yolo || is_exec, mcp: Arc::new(mcp), plugins, session_allow: Default::default() };
+    let ctx = ToolCtx {
+        cwd: cwd.clone(),
+        sandbox,
+        auto_approve: cli.yolo || is_exec,
+        mcp: Arc::new(mcp),
+        plugins,
+        session_allow: Default::default(),
+    };
     let cwd_s = cwd.display().to_string();
 
     let (session, history, resumed_view) = match &cli.command {
@@ -246,10 +328,15 @@ async fn async_main(cli: Cli, cfg: config::Config, cwd: PathBuf, sandbox: Sandbo
         }
         _ => (session::Session::create(&cwd_s, &model)?, vec![], vec![]),
     };
+    let mut client=api::Client::new(auth::Auth::load()?);client.service_tier=cfg.service_tier.as_deref().and_then(models::normalize_tier);
     let mut agent = Agent {
-        client: api::Client::new(auth::Auth::load()?),
+        web_search: web_search::SearchMode::Disabled,
+        client,
+        reasoning_effort: cfg.model_reasoning_effort.clone().unwrap_or_else(||models::default_effort(&model)),
         model,
-        reasoning_effort: "medium".into(),
+        mode: "codex".into(),
+        goal_thread_id: None,
+        scheduled_run_id: None,
         instructions,
         ctx,
         history,
@@ -259,14 +346,34 @@ async fn async_main(cli: Cli, cfg: config::Config, cwd: PathBuf, sandbox: Sandbo
     if let Some(Cmd::Exec { prompt }) = &cli.command {
         let (tx, mut rx) = unbounded_channel();
         let consumer = async {
+            let mut display = stream_display::StreamDisplay::default();
             while let Some(e) = rx.recv().await {
                 match e {
                     Event::Text(t) => {
+                        display.delta(&t);
                         print!("{t}");
                         let _ = std::io::stdout().flush();
                     }
-                    Event::ToolStart { name, args, .. } => eprintln!("\n\x1b[2m▶ {name} {args}\x1b[0m"),
-                    Event::ReasoningStart { .. } | Event::ReasoningDelta { .. } | Event::ReasoningEnd { .. } => {}
+                    Event::ToolStart { name, args, .. } => {
+                        eprintln!("\n\x1b[2m▶ {name} {args}\x1b[0m")
+                    }
+                    Event::ReasoningStart { .. }
+                    | Event::ReasoningDelta { .. }
+                    | Event::ReasoningEnd { .. } => {}
+                    Event::AssistantMessage(value) => {
+                        match display.message(&value) {
+                            Some(stream_display::Update::Append(text)) => print!("{text}"),
+                            Some(stream_display::Update::Replace(text)) => {
+                                print!("\nFinal answer updated:\n{text}")
+                            }
+                            None => {}
+                        }
+                        let _ = std::io::stdout().flush();
+                    }
+                    Event::Usage { .. }
+                    | Event::GoalState(_)
+                    | Event::TaskReport(_)
+                    | Event::WebSearch(_) => {}
                     Event::ToolEnd { .. } | Event::Approval { .. } | Event::Done => {}
                     Event::Error(e) => eprintln!("error: {e}"),
                 }

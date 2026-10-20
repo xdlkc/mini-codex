@@ -1,0 +1,10 @@
+.account-card { align-items:flex-start; gap:16px; max-width:620px; }
+.account-card > strong { font-size:17px; font-weight:550; }
+.account-card .settings-sub { margin:0; }
+.account-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.account-key-form { display:flex; flex-direction:column; gap:12px; width:100%; max-width:460px; padding:16px 0; }
+.account-key-form button { align-self:flex-start; }
+.account-note { font-size:12px; line-height:1.6; color:var(--text-secondary); }
+.account-browser-link { display:inline-flex; text-decoration:none; justify-content:center; }
+.account-pending { font-size:13px; line-height:1.6; }
+.account-error { color:var(--red-400); font-size:13px; line-height:1.6; }

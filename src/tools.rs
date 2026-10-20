@@ -65,12 +65,26 @@ pub fn definitions(ctx: &ToolCtx) -> Value {
     Value::Array(defs)
 }
 
-async fn approve(id: &str, name: &str, what: String, ctx: &ToolCtx, tx: &UnboundedSender<Event>) -> bool {
+async fn approve(
+    id: &str,
+    name: &str,
+    what: String,
+    ctx: &ToolCtx,
+    tx: &UnboundedSender<Event>,
+) -> bool {
     if ctx.auto_approve || ctx.session_allow.load(Ordering::Relaxed) {
         return true;
     }
     let (reply, rx) = oneshot::channel();
-    if tx.send(Event::Approval { id: id.into(), name: name.into(), what, reply }).is_err() {
+    if tx
+        .send(Event::Approval {
+            id: id.into(),
+            name: name.into(),
+            what,
+            reply,
+        })
+        .is_err()
+    {
         return false;
     }
     match rx.await.unwrap_or(Verdict::No) {
@@ -83,14 +97,26 @@ async fn approve(id: &str, name: &str, what: String, ctx: &ToolCtx, tx: &Unbound
     }
 }
 
-pub async fn run(id: &str, name: &str, args: &str, ctx: &ToolCtx, tx: &UnboundedSender<Event>) -> String {
+pub async fn run(
+    id: &str,
+    name: &str,
+    args: &str,
+    ctx: &ToolCtx,
+    tx: &UnboundedSender<Event>,
+) -> String {
     match run_inner(id, name, args, ctx, tx).await {
         Ok(s) => s,
         Err(e) => format!("error: {e:#}"),
     }
 }
 
-async fn run_inner(id: &str, name: &str, args: &str, ctx: &ToolCtx, tx: &UnboundedSender<Event>) -> Result<String> {
+async fn run_inner(
+    id: &str,
+    name: &str,
+    args: &str,
+    ctx: &ToolCtx,
+    tx: &UnboundedSender<Event>,
+) -> Result<String> {
     let v: Value = serde_json::from_str(args)?;
     match name {
         "shell" => {
@@ -101,7 +127,10 @@ async fn run_inner(id: &str, name: &str, args: &str, ctx: &ToolCtx, tx: &Unbound
             if !approve(id, name, argv.join(" "), ctx, tx).await {
                 return Ok("command rejected by user".into());
             }
-            let dir = v["workdir"].as_str().map(|d| ctx.cwd.join(d)).unwrap_or_else(|| ctx.cwd.clone());
+            let dir = v["workdir"]
+                .as_str()
+                .map(|d| ctx.cwd.join(d))
+                .unwrap_or_else(|| ctx.cwd.clone());
             let timeout = Duration::from_millis(v["timeout_ms"].as_u64().unwrap_or(10_000));
             exec(&argv, &dir, timeout, ctx).await
         }
@@ -131,9 +160,15 @@ async fn run_inner(id: &str, name: &str, args: &str, ctx: &ToolCtx, tx: &Unbound
     }
 }
 
-async fn exec(argv: &[String], dir: &PathBuf, timeout: Duration, ctx: &ToolCtx) -> Result<String> {
+pub(crate) async fn exec(
+    argv: &[String],
+    dir: &PathBuf,
+    timeout: Duration,
+    ctx: &ToolCtx,
+) -> Result<String> {
     let mut cmd = if cfg!(target_os = "macos") && ctx.sandbox != Sandbox::DangerFullAccess {
-        let mut profile = String::from("(version 1)(allow default)(deny file-write*)(deny network*)");
+        let mut profile =
+            String::from("(version 1)(allow default)(deny file-write*)(deny network*)");
         if ctx.sandbox == Sandbox::WorkspaceWrite {
             profile.push_str(&format!(
                 "(allow file-write* (subpath \"{}\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/dev\"))",
@@ -163,7 +198,10 @@ async fn exec(argv: &[String], dir: &PathBuf, timeout: Duration, ctx: &ToolCtx) 
                 text.truncate(n);
                 text.push_str("\n…[truncated]");
             }
-            Ok(format!("exit code: {}\n{text}", out.status.code().unwrap_or(-1)))
+            Ok(format!(
+                "exit code: {}\n{text}",
+                out.status.code().unwrap_or(-1)
+            ))
         }
     }
 }

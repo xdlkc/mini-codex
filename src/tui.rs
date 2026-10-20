@@ -34,6 +34,16 @@ struct State {
 }
 
 impl State {
+    fn assistant(&mut self, text: String) {
+        if self.assist_open {
+            if let Some((_, line)) = self.lines.last_mut() {
+                line.push_str(&text);
+            }
+        } else {
+            self.lines.push((Kind::Assistant, text));
+            self.assist_open = true;
+        }
+    }
     fn push(&mut self, k: Kind, s: impl Into<String>) {
         self.lines.push((k, s.into()));
         self.assist_open = false;
@@ -43,7 +53,12 @@ impl State {
 
 fn style(k: Kind) -> (Style, &'static str) {
     match k {
-        Kind::User => (Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD), "› "),
+        Kind::User => (
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+            "› ",
+        ),
         Kind::Assistant => (Style::default(), "• "),
         Kind::Tool => (Style::default().fg(Color::Yellow), "▶ "),
         Kind::Output => (Style::default().add_modifier(Modifier::DIM), "  "),
@@ -54,14 +69,18 @@ fn style(k: Kind) -> (Style, &'static str) {
 
 fn ui(f: &mut Frame, s: &State) {
     let bottom_h = if s.approval.is_some() { 6 } else { 3 };
-    let [chat, bottom] = Layout::vertical([Constraint::Min(1), Constraint::Length(bottom_h)]).areas(f.area());
+    let [chat, bottom] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(bottom_h)]).areas(f.area());
 
     let mut lines: Vec<Line> = Vec::new();
     for (k, text) in &s.lines {
         let (st, prefix) = style(*k);
         for (i, l) in text.split('\n').enumerate() {
             let p = if i == 0 { prefix } else { "  " };
-            lines.push(Line::from(vec![Span::styled(p, st), Span::styled(l.to_string(), st)]));
+            lines.push(Line::from(vec![
+                Span::styled(p, st),
+                Span::styled(l.to_string(), st),
+            ]));
         }
     }
     let inner = chat.width.saturating_sub(2).max(1) as usize;
@@ -86,25 +105,63 @@ fn ui(f: &mut Frame, s: &State) {
 
     if let Some((what, _)) = &s.approval {
         f.render_widget(
-            Paragraph::new(vec![Line::from(what.clone()), Line::from(""), Line::from("[y] approve   [a] approve for session   [n] reject")])
-                .wrap(Wrap { trim: false })
-                .block(Block::default().borders(Borders::ALL).title(" Approve? ").border_style(Style::default().fg(Color::Yellow))),
+            Paragraph::new(vec![
+                Line::from(what.clone()),
+                Line::from(""),
+                Line::from("[y] approve   [a] approve for session   [n] reject"),
+            ])
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Approve? ")
+                    .border_style(Style::default().fg(Color::Yellow)),
+            ),
             bottom,
         );
     } else {
-        let title = if s.busy { " working… (Ctrl-C quit) " } else { " message (/new /exit /help) " };
-        f.render_widget(Paragraph::new(s.input.clone()).block(Block::default().borders(Borders::ALL).title(title)), bottom);
+        let title = if s.busy {
+            " working… (Ctrl-C quit) "
+        } else {
+            " message (/new /exit /help) "
+        };
+        f.render_widget(
+            Paragraph::new(s.input.clone())
+                .block(Block::default().borders(Borders::ALL).title(title)),
+            bottom,
+        );
         let x = bottom.x + 1 + s.input.width() as u16;
-        f.set_cursor_position((x.min(bottom.x + bottom.width.saturating_sub(2)), bottom.y + 1));
+        f.set_cursor_position((
+            x.min(bottom.x + bottom.width.saturating_sub(2)),
+            bottom.y + 1,
+        ));
     }
 }
 
-pub async fn run(agent: Arc<Mutex<Agent>>, cwd: String, history: Vec<(String, String)>, first: Option<String>) -> Result<()> {
+pub async fn run(
+    agent: Arc<Mutex<Agent>>,
+    cwd: String,
+    history: Vec<(String, String)>,
+    first: Option<String>,
+) -> Result<()> {
     let header = {
         let a = agent.lock().await;
-        format!("mcodex · {} · {} · {}", a.model, a.client.auth.describe(), cwd)
+        format!(
+            "mcodex · {} · {} · {}",
+            a.model,
+            a.client.auth.describe(),
+            cwd
+        )
     };
-    let mut s = State { lines: vec![], input: String::new(), busy: false, assist_open: false, scroll_back: 0, approval: None, header };
+    let mut s = State {
+        lines: vec![],
+        input: String::new(),
+        busy: false,
+        assist_open: false,
+        scroll_back: 0,
+        approval: None,
+        header,
+    };
     for (role, text) in history {
         let k = match role.as_str() {
             "user" => Kind::User,
@@ -128,6 +185,7 @@ pub async fn run(agent: Arc<Mutex<Agent>>, cwd: String, history: Vec<(String, St
 
     let mut term = ratatui::init();
     let mut keys = EventStream::new();
+    let mut display = crate::stream_display::StreamDisplay::default();
     let result: Result<()> = loop {
         if let Err(e) = term.draw(|f| ui(f, &s)) {
             break Err(e.into());
@@ -135,12 +193,7 @@ pub async fn run(agent: Arc<Mutex<Agent>>, cwd: String, history: Vec<(String, St
         tokio::select! {
             Some(ev) = rx.recv() => match ev {
                 Event::Text(t) => {
-                    if s.assist_open {
-                        if let Some((_, l)) = s.lines.last_mut() { l.push_str(&t); }
-                    } else {
-                        s.lines.push((Kind::Assistant, t));
-                        s.assist_open = true;
-                    }
+                    display.delta(&t);s.assistant(t);
                 }
                 Event::ReasoningEnd { text, .. } => {
                     if !text.trim().is_empty() {
@@ -148,14 +201,16 @@ pub async fn run(agent: Arc<Mutex<Agent>>, cwd: String, history: Vec<(String, St
                     }
                 }
                 Event::ReasoningStart { .. } | Event::ReasoningDelta { .. } => {}
+                Event::AssistantMessage(value)=>{match display.message(&value){Some(crate::stream_display::Update::Append(text))=>s.assistant(text),Some(crate::stream_display::Update::Replace(text))=>{s.push(Kind::Info,"Final answer updated");s.push(Kind::Assistant,text);},None=>{}}}
+                Event::Usage { .. } | Event::GoalState(_) | Event::TaskReport(_) | Event::WebSearch(_) => {}
                 Event::ToolStart { name, args, .. } => s.push(Kind::Tool, format!("{name} {args}")),
                 Event::ToolEnd { output, .. } => {
                     let short: String = output.lines().take(12).collect::<Vec<_>>().join("\n");
                     s.push(Kind::Output, short);
                 }
                 Event::Approval { what, reply, .. } => s.approval = Some((what, reply)),
-                Event::Done => { s.busy = false; s.assist_open = false; }
-                Event::Error(e) => { s.push(Kind::Error, e); s.busy = false; }
+                Event::Done => { display.clear();s.busy = false; s.assist_open = false; }
+                Event::Error(e) => { display.clear();s.push(Kind::Error, e); s.busy = false; }
             },
             Some(Ok(ev)) = keys.next() => {
                 let CEvent::Key(k) = ev else { continue };

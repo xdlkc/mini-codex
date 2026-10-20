@@ -1,0 +1,19 @@
+#desktop-app-rail { width:52px; min-width:52px; height:100%; padding:0 8px 12px; display:flex; flex-direction:column; align-items:center; gap:7px; background:var(--bg-sidebar); z-index:25; }
+.rail-drag { height:52px; width:100%; flex-shrink:0; }
+.rail-button { width:36px; height:36px; padding:8px; border:0; border-radius:9px; color:var(--text-tertiary); background:transparent; cursor:pointer; display:flex; justify-content:center; align-items:center; }
+.rail-button svg { width:21px; height:21px; }
+.rail-button:hover { background:var(--bg-hover); color:var(--text-primary); }
+.rail-button.active { background:var(--bg-active); color:var(--text-primary); }
+.rail-spacer { flex:1; }
+.rail-account { border:0; border-radius:50%; width:25px; height:25px; background:#bc4535; color:white; font-size:11px; cursor:pointer; }
+.desktop-shell #sidebar { background:var(--bg-subtle); }
+.desktop-shell .sidebar-top { height:46px; min-height:46px; padding-left:36px; }
+.desktop-shell .mode-switcher,.desktop-shell #nav-search,.desktop-shell #nav-library,.desktop-shell #nav-scheduled,.desktop-shell .sidebar-footer { display:none; }
+.desktop-mode-header { display:flex; align-items:center; justify-content:space-between; padding:6px 12px 12px 16px; gap:8px; }
+.desktop-mode-button { border:0; background:transparent; display:flex; align-items:center; gap:8px; color:var(--text-primary); padding:3px 0; font-size:20px; font-weight:550; cursor:pointer; }
+.mode-chevron { font-size:15px; font-weight:400; color:var(--text-tertiary); }
+.desktop-mode-option > span:first-child { display:flex; flex-direction:column; gap:3px; }
+.desktop-mode-option strong { font-size:14px; font-weight:550; }
+.desktop-mode-option small { color:var(--text-secondary); font-size:12px; }
+.desktop-shell #topbar.sidebar-closed { padding-left:48px; }
+@media(max-width:760px){.desktop-shell #sidebar:not(.collapsed){left:52px;}.desktop-shell #topbar{padding-left:24px;}.desktop-shell #topbar.sidebar-closed{padding-left:48px;}#desktop-app-rail{padding-left:6px;padding-right:6px;width:48px;min-width:48px;}.desktop-shell #sidebar:not(.collapsed){left:48px;}}

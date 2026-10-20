@@ -1,0 +1,317 @@
+{
+  "schemaVersion": 2,
+  "tiptapVersion": "3.32.0",
+  "nodes": {
+    "paragraph": {
+      "content": "inline*",
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "blockquote": {
+      "content": "block+",
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "bulletList": {
+      "content": "listItem+",
+      "group": "block list",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "codeBlock": {
+      "content": "text*",
+      "group": "block",
+      "marks": "",
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "language": {
+          "default": null
+        }
+      }
+    },
+    "doc": {
+      "content": "block+",
+      "group": null,
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "hardBreak": {
+      "content": null,
+      "group": "inline",
+      "marks": null,
+      "inline": true,
+      "atom": true,
+      "attrs": {}
+    },
+    "heading": {
+      "content": "inline*",
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "level": {
+          "default": 1
+        }
+      }
+    },
+    "horizontalRule": {
+      "content": null,
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": true,
+      "attrs": {}
+    },
+    "listItem": {
+      "content": "paragraph block*",
+      "group": null,
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "orderedList": {
+      "content": "listItem+",
+      "group": "block list",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "start": {
+          "default": 1
+        },
+        "type": {
+          "default": null
+        }
+      }
+    },
+    "text": {
+      "content": null,
+      "group": "inline",
+      "marks": null,
+      "inline": true,
+      "atom": true,
+      "attrs": {}
+    },
+    "table": {
+      "content": "tableRow+",
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "layout": {
+          "default": "normal"
+        }
+      }
+    },
+    "tableRow": {
+      "content": "(tableCell | tableHeader)*",
+      "group": null,
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "tableCell": {
+      "content": "block+",
+      "group": null,
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "colspan": {
+          "default": 1
+        },
+        "rowspan": {
+          "default": 1
+        },
+        "colwidth": {
+          "default": null
+        },
+        "align": {
+          "default": null
+        }
+      }
+    },
+    "tableHeader": {
+      "content": "block+",
+      "group": null,
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "colspan": {
+          "default": 1
+        },
+        "rowspan": {
+          "default": 1
+        },
+        "colwidth": {
+          "default": null
+        },
+        "align": {
+          "default": null
+        }
+      }
+    },
+    "taskList": {
+      "content": "taskItem+",
+      "group": "block list",
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {}
+    },
+    "taskItem": {
+      "content": "paragraph block*",
+      "group": null,
+      "marks": null,
+      "inline": false,
+      "atom": false,
+      "attrs": {
+        "checked": {
+          "default": false
+        }
+      }
+    },
+    "image": {
+      "content": null,
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": true,
+      "attrs": {
+        "attachmentId": {
+          "default": null
+        },
+        "name": {
+          "default": ""
+        },
+        "alt": {
+          "default": ""
+        },
+        "title": {
+          "default": ""
+        },
+        "width": {
+          "default": null
+        },
+        "height": {
+          "default": null
+        }
+      }
+    },
+    "fileAttachment": {
+      "content": null,
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": true,
+      "attrs": {
+        "attachmentId": {
+          "default": null
+        },
+        "name": {
+          "default": ""
+        },
+        "mimeType": {
+          "default": "application/octet-stream"
+        },
+        "size": {
+          "default": null
+        }
+      }
+    },
+    "workBlock": {
+      "content": null,
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": true,
+      "attrs": {
+        "kind": {
+          "default": "prompt"
+        },
+        "title": {
+          "default": ""
+        },
+        "text": {
+          "default": ""
+        },
+        "targetId": {
+          "default": ""
+        },
+        "html": {
+          "default": ""
+        }
+      }
+    },
+    "inlineMath": {
+      "content": null,
+      "group": "inline",
+      "marks": null,
+      "inline": true,
+      "atom": true,
+      "attrs": {
+        "latex": {
+          "default": ""
+        }
+      }
+    },
+    "blockMath": {
+      "content": null,
+      "group": "block",
+      "marks": null,
+      "inline": false,
+      "atom": true,
+      "attrs": {
+        "latex": {
+          "default": ""
+        }
+      }
+    }
+  },
+  "marks": {
+    "link": {
+      "excludes": null,
+      "attrs": {
+        "href": {
+          "default": null
+        }
+      }
+    },
+    "bold": {
+      "excludes": null,
+      "attrs": {}
+    },
+    "code": {
+      "excludes": "_",
+      "attrs": {}
+    },
+    "italic": {
+      "excludes": null,
+      "attrs": {}
+    },
+    "strike": {
+      "excludes": null,
+      "attrs": {}
+    },
+    "underline": {
+      "excludes": null,
+      "attrs": {}
+    }
+  }
+}

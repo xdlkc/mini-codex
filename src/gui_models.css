@@ -1,0 +1,7 @@
+.model-catalog-menu{width:min(420px,calc(100vw - 30px))!important;max-height:min(620px,75vh);display:flex!important;flex-direction:column}
+.model-catalog-menu:not(.open){display:none!important}
+.model-catalog-list{overflow:auto;min-height:0;max-height:400px}
+.model-catalog-menu .menu-item-text{display:flex;flex-direction:column;min-width:0;gap:4px}
+.model-catalog-menu .menu-item-text strong{font-size:13px;font-weight:500;overflow-wrap:anywhere}
+.model-catalog-menu .menu-item-text small{font-size:11px;color:var(--text-tertiary);white-space:normal;line-height:1.4}
+.model-catalog-note{font-size:12px;line-height:1.5;color:var(--text-tertiary);margin:8px 12px;overflow-wrap:anywhere}

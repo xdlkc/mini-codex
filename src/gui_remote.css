@@ -1,0 +1,13 @@
+.remote-location { max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;-webkit-app-region:no-drag; }
+.remote-location[data-state=failed],.remote-location[data-state=disconnected]{color:var(--text-secondary);border-style:dashed;}
+.remote-form{display:flex;flex-direction:column;gap:14px;}
+.remote-form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--text-secondary);}
+.remote-card{padding:20px 0;border-bottom:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:9px;}
+.remote-card strong{font-size:14px;font-weight:550;}
+.remote-card code{font-size:12px;overflow-wrap:anywhere;}
+.remote-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.remote-note{color:var(--text-secondary);font-size:12px;line-height:1.6;}
+.remote-error{color:var(--red-400);white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:150px;overflow:auto;}
+.remote-fingerprint{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg-hover);padding:12px;border-radius:10px;font-size:12px;margin:14px 0;}
+.remote-confirm{display:flex;align-items:flex-start;gap:10px;font-size:13px;margin:18px 0;line-height:1.5;}
+@media(max-width:760px){.remote-location{max-width:150px;font-size:11px;}.remote-actions>.btn-pill{flex:1 1 auto;}}
