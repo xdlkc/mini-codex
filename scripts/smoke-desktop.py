@@ -222,7 +222,20 @@ def run(binary: Path, timeout: float) -> None:
 
             project = server.rpc("desktop/project/create", {"name": "Smoke 工作项目", "mode": "work", "instructions": "Initial instructions"})["project"]
             project_id = project["id"]
-            other_project = server.rpc("desktop/project/create", {"name": "Other Codex project", "mode": "codex"})["project"]
+            other_project = server.rpc("desktop/project/create", {
+                "name": "Other Codex project", "mode": "codex", "path": str(workspace / "."), "hostId": "local",
+            })["project"]
+            require(other_project["path"] == str(workspace) and other_project["hostId"] == "local", "Codex project did not preserve its canonical source folder and host")
+            saved_project = server.rpc("desktop/project/read", {"id": other_project["id"]})["project"]
+            require(saved_project["path"] == str(workspace) and saved_project["hostId"] == "local", "Codex folder binding was not readable")
+            before_rejection = (store / "desktop.json").read_bytes()
+            missing_source = root / "missing-source" / "project"
+            server.expect_error("desktop/project/create", {"name": "Missing source", "mode": "codex", "path": str(missing_source), "hostId": "local"})
+            server.expect_error("desktop/project/update", {"id": other_project["id"], "path": str(missing_source)})
+            require(not missing_source.parent.exists(), "rejecting a missing Codex source folder created filesystem entries")
+            require((store / "desktop.json").read_bytes() == before_rejection, "rejected Codex source binding changed saved desktop state")
+            require(not (workspace / ".git").exists(), "binding a Codex source folder initialized Git")
+            passed("Codex projects bind existing source folders and reject missing folders without writes")
             server.rpc("desktop/project/update", {"id": project_id, "name": "Smoke 项目已更新", "instructions": "持久化 instructions"})
             require(server.rpc("desktop/project/read", {"id": project_id})["project"]["instructions"] == "持久化 instructions", "project update was not readable")
             require(item_ids(server.rpc("desktop/project/list", {"mode": "work", "search": "已更新"})) == {project_id}, "project filters did not match updated state")
@@ -256,6 +269,10 @@ def run(binary: Path, timeout: float) -> None:
             require(modes["codex"] in thread_ids(server) and modes["codex"] not in thread_ids(server, archived=True), "unarchive did not restore the active thread")
             server.rpc("thread/archive", {"threadId": modes["codex"]})
             passed("three thread modes, metadata, rename, archive, and unarchive")
+
+            bound_thread = server.rpc("thread/start", {"cwd": other_project["path"], "mode": "codex", "projectId": other_project["id"]})["thread"]
+            require(bound_thread["cwd"] == str(workspace) and bound_thread["projectId"] == other_project["id"], "Codex thread did not use its project's actual source folder")
+            passed("Codex project tasks use the bound source folder")
 
             before = set((store / "sessions").glob("*.jsonl"))
             # This checks persistence under overlap, not a 100-request latency
@@ -298,6 +315,11 @@ def run(binary: Path, timeout: float) -> None:
             settings = server.rpc("desktop/settings/read")["settings"]
             require(settings["mode"] == "chat" and settings["preferences"]["theme"] == "dark" and settings["preferences"]["sidebarWidth"] == 284, "desktop settings did not survive restart")
             require(server.rpc("desktop/project/read", {"id": project_id})["project"]["name"] == "Smoke 项目已更新", "project did not survive restart")
+            restored_project = server.rpc("desktop/project/read", {"id": other_project["id"]})["project"]
+            require(restored_project["path"] == str(workspace) and restored_project["hostId"] == "local", "Codex source folder or host binding did not survive restart")
+            restored_bound_thread = server.rpc("thread/read", {"threadId": bound_thread["id"]})["thread"]
+            require(restored_bound_thread["cwd"] == str(workspace) and restored_bound_thread["projectId"] == other_project["id"], "Codex project's task cwd or assignment did not survive restart")
+            require(not missing_source.parent.exists(), "a rejected missing Codex source folder appeared after restart")
             require(server.rpc("desktop/document/read", {"id": document_id})["document"]["content"] == "# Smoke document\n重启后应保留。", "document did not survive restart")
             metadata = server.rpc("desktop/threadMetadata/read", {"threadId": modes["work"]})["metadata"]
             require(metadata["mode"] == "work" and metadata["pinned"] and metadata["projectId"] == project_id, "thread metadata did not survive restart")
@@ -305,7 +327,7 @@ def run(binary: Path, timeout: float) -> None:
             require(modes["codex"] in thread_ids(server, archived=True) and modes["codex"] not in thread_ids(server), "archive state did not survive restart")
             require(user_texts(server.rpc("thread/read", {"threadId": forks["prefix"], "includeTurns": True})["thread"]) == ["第一条 smoke"], "fork did not survive restart")
             require(set(rapid_ids) <= thread_ids(server), "rapid sessions did not survive restart")
-            passed("projects, documents, preferences, metadata, archives, and forks survive restart")
+            passed("projects, Codex folder/host bindings, task cwd, documents, preferences, metadata, archives, and forks survive restart")
 
             server.rpc("thread/unarchive", {"threadId": modes["codex"]})
             server.rpc("thread/delete", {"threadId": modes["codex"]})

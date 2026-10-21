@@ -174,6 +174,18 @@ test('a delayed thread/start sends to its captured target without changing the n
   assertNewView();
 });
 
+test('continuing a named or existing chat keeps its title after the turn starts',async()=>{
+  for(const metadata of [{name:'Preserved handoff title',preview:'Original request'},{name:null,preview:'Original request'}]){
+    const h=harness();h.context.currentThread='moved-chat';h.desktop.threads=[{id:'moved-chat',...metadata}];h.input.value='A follow-up that must not rename this chat';await h.context.sendTurn();
+    assert.equal(h.nodes.get('topbar-title').textContent,metadata.name||metadata.preview);
+  }
+});
+
+test('a rename received while starting a turn takes priority over its older title',async()=>{
+  const waiting=deferred(),h=harness(method=>method==='turn/start'?waiting.promise:{});h.context.currentThread='chat';h.desktop.threads=[{id:'chat',name:'Old title'}];h.input.value='Follow-up';
+  const sending=h.context.sendTurn();await until(()=>h.calls.some(call=>call.method==='turn/start'),'turn did not start');h.desktop.threads=[{id:'chat',name:'New title'}];waiting.resolve({turn:{id:'turn'}});await sending;assert.equal(h.nodes.get('topbar-title').textContent,'New title');
+});
+
 test('flushDocument waits for an active save, then saves edits made during that request', async () => {
   const firstSave = deferred(), secondSave = deferred();
   let updates = 0;

@@ -50,7 +50,7 @@ function renderPendingApprovals(){
     if(request.params.threadId!==currentThread)continue;
     renderApprovalCard(request.id,request.method,request.params);
     const card=$('messages').lastElementChild;card.dataset.approval=request.id;
-    card.querySelectorAll('button[data-dec]').forEach(button=>{button.onclick=()=>{rpcSend({id:request.id,result:{decision:button.dataset.dec}});desktop.approvals.delete(request.id);card.remove();};});
+    card.querySelectorAll('button[data-dec]').forEach(button=>{const answer=button.onclick;button.onclick=()=>{if(!desktop.approvals.has(request.id))return;if(answer)answer();else rpcSend({id:request.id,result:{decision:button.dataset.dec}});desktop.approvals.delete(request.id);card.remove();};});
   }
 }
 const previousNotification=handleServerNotification;
@@ -173,6 +173,7 @@ openThread=async function(id){
   const r=await rpcCall('thread/resume',{threadId:id});if(ticket!==desktop.navigation)return;
   if(r.thread.mode&&r.thread.mode!==desktop.mode){desktop.mode=r.thread.mode;updateModeUI();}
   currentThread=r.thread.id;desktop.projectId=r.thread.projectId||null;updateCwdUI(r.cwd||currentCwd);clearTimeline();desktop.autoScroll=true;
+  if(typeof codexPermissionsRestore==='function')codexPermissionsRestore(r.thread);
   for(const turn of r.thread.turns||[]){activeTurnBlock=null;for(const item of turn.items||[])upsertTimelineItem(item);finalizeTurnWorkedDivider(activeTurnBlock,turn.durationMs);}
   $('topbar-title').textContent=r.thread.name||r.thread.preview||'Chat';$('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');
   setTurnStatus(r.thread.status?.type==='active');addTab(r.thread);restoreDraft();renderPendingApprovals();
@@ -180,14 +181,15 @@ openThread=async function(id){
   await rpcCall('desktop/threadMetadata/set',{threadId:currentThread,unread:false});refreshThreads();
 };
 function menuButton(label,run){const b=document.createElement('button');b.className='menu-item';b.textContent=label;b.onclick=()=>{closeFloatingMenu();Promise.resolve().then(run).catch(showError);};return b;}
+function desktopMenuText(en,zh){return desktop.mode==='codex'&&typeof codexText==='function'?codexText(en,zh):en;}
 function threadMenu(e,t){
   e.stopPropagation();const anchor=e.currentTarget||e.target;openFloatingMenuAt('thread-'+t.id,anchor,'',false);const menu=$('floating-menu');
-  menu.append(menuButton(t.pinned?'Unpin':'Pin',async()=>{await rpcCall('desktop/threadMetadata/set',{threadId:t.id,pinned:!t.pinned});await refreshThreads();}));
-  menu.append(menuButton('Rename',()=>promptRenameThread(t.id,t.name||t.preview||'New chat')));
-  menu.append(menuButton('Move to project',()=>moveThreadDialog(t)));
-  menu.append(menuButton('Open a copy',async()=>{const r=await rpcCall('thread/fork',{threadId:t.id});await openThread(r.thread.id);}));
-  menu.append(menuButton('Archive',()=>archiveThread(t.id)));
-  if(!t.readOnly)menu.append(menuButton('Delete',()=>confirmDeleteThread(t)));
+  menu.append(menuButton(t.pinned?desktopMenuText('Unpin','取消置顶'):desktopMenuText('Pin','置顶'),async()=>{await rpcCall('desktop/threadMetadata/set',{threadId:t.id,pinned:!t.pinned});await refreshThreads();}));
+  menu.append(menuButton(desktopMenuText('Rename','重命名'),()=>promptRenameThread(t.id,t.name||t.preview||'New chat')));
+  menu.append(menuButton(desktopMenuText('Move to project','移至项目'),()=>moveThreadDialog(t)));
+  const fork=menuButton(desktopMenuText('Open a copy','打开副本'),async()=>{const r=await rpcCall('thread/fork',{threadId:t.id});await openThread(r.thread.id);});fork.dataset.threadAction='fork';menu.append(fork);
+  menu.append(menuButton(desktopMenuText('Archive','归档'),()=>archiveThread(t.id)));
+  if(!t.readOnly)menu.append(menuButton(desktopMenuText('Delete','永久删除'),()=>confirmDeleteThread(t)));
 }
 async function archiveThread(id){await rpcCall('thread/archive',{threadId:id});if(currentThread===id)await newThread();desktop.tabs=desktop.tabs.filter(t=>t.id!==id);await refreshThreads();toast('Chat archived',{label:'Undo',run:async()=>{await rpcCall('thread/unarchive',{threadId:id});await refreshThreads();}});}
 function confirmDeleteThread(t){
@@ -240,16 +242,17 @@ $('composer-input').addEventListener('paste',e=>{if(e.clipboardData.files.length
 $('composer-host').addEventListener('dragover',e=>e.preventDefault());
 $('composer-host').addEventListener('drop',e=>{e.preventDefault();addAttachments(e.dataTransfer.files).catch(showError);});
 sendTurn=async function(){
+  if(typeof codexPermissionUi!=='undefined'&&codexPermissionUi.loading)return;
   const serviceTier=typeof selectedServiceTier==='function'?selectedServiceTier():'default';
   if(desktop.loading||isTurnActive)return;
   const raw=$('composer-input').value.trim();if(!raw&&!desktopAttachments.length&&!mentionedFiles.length)return;
   if(['/new','/clear'].includes(raw)){await newThread();return;}
   if(['/diff','/review'].includes(raw)&&desktop.mode==='codex'){toggleDrawer('diff');$('composer-input').value='';autoResizeInput();return;}
-  const ticket=desktop.navigation,mode=desktop.mode,projectId=desktop.projectId,model=currentModel,cwd=currentCwd,effort=currentEffort,sandbox=currentSandbox,draft=draftKey(),search=typeof webSearchRequest==='function'?webSearchRequest():{};
+  const ticket=desktop.navigation,mode=desktop.mode,projectId=desktop.projectId,model=currentModel,cwd=currentCwd,effort=currentEffort,sandbox=currentSandbox,draft=draftKey(),search=typeof webSearchRequest==='function'?webSearchRequest():{},permissions=typeof codexPermissionRequest==='function'?codexPermissionRequest():{};
   let target=currentThread;desktop.loading=true;const attachments=[...desktopAttachments],mentions=[...mentionedFiles];
   try{
     if(!target){
-      const r=await rpcCall('thread/start',{cwd:cwd||undefined,mode,projectId,model,sandbox,...search});target=r.thread.id;
+      const r=await rpcCall('thread/start',{cwd:cwd||undefined,mode,projectId,model,sandbox,...permissions,...search});target=r.thread.id;
       if(typeof webSearchThreadStarted==='function')webSearchThreadStarted(r.thread,draft,search);
       if(ticket===desktop.navigation){currentThread=target;updateCwdUI(r.cwd);addTab({...r.thread,preview:raw.slice(0,50)});}
     }
@@ -257,8 +260,8 @@ sendTurn=async function(){
     if(t?.readOnly){const r=await rpcCall('thread/fork',{threadId:target});target=r.thread.id;if(typeof webSearchThreadStarted==='function')webSearchThreadStarted(r.thread,draft,search);if(ticket===desktop.navigation){currentThread=target;addTab(r.thread);}}
     if(ticket===desktop.navigation){$('composer-input').value='';autoResizeInput();closeAutocomplete();desktopAttachments=[];mentionedFiles=[];renderComposerChips();desktop.drafts.delete(target);desktop.drafts.delete(draft);desktop.autoScroll=true;}
     const input=[...(raw?[{type:'text',text:raw}]:[]),...attachments,...mentions.map(path=>({type:'mention',name:path,path}))];
-    await rpcCall('turn/start',{threadId:target,model,reasoningEffort:effort,serviceTier,...search,sandboxPolicy:{type:sandbox==='read-only'?'readOnly':sandbox==='danger-full-access'?'dangerFullAccess':'workspaceWrite'},input});
-    if(ticket===desktop.navigation)$('topbar-title').textContent=raw.slice(0,60)||'Chat';
+    await rpcCall('turn/start',{threadId:target,model,reasoningEffort:effort,serviceTier,...permissions,...search,sandboxPolicy:{type:sandbox==='read-only'?'readOnly':sandbox==='danger-full-access'?'dangerFullAccess':'workspaceWrite'},input});
+    if(ticket===desktop.navigation){const latest=desktop.threads.find(thread=>thread.id===target)||t;$('topbar-title').textContent=latest?.name||latest?.preview||raw.slice(0,60)||'Chat';}
   }catch(error){if(ticket===desktop.navigation){$('composer-input').value=raw;desktopAttachments=attachments;mentionedFiles=mentions;renderComposerChips();autoResizeInput();}else desktop.drafts.set(target||draft,raw);throw error;}
   finally{desktop.loading=false;}
 };
@@ -394,6 +397,7 @@ openCustomModal=function(title,html){modalPreviousFocus=document.activeElement;b
 const baseCloseModal=closeModal;
 closeModal=function(){baseCloseModal();modalPreviousFocus?.focus?.();};
 document.addEventListener('keydown',e=>{
+  if(e.target?.closest?.('#codex-terminal-panel')&&(e.ctrlKey&&!e.metaKey||e.metaKey&&e.key.toLowerCase()==='k'))return;
   if(e.key==='Escape'){closeModal();closeFloatingMenu();closeAutocomplete();}
   if(e.key==='Tab'&&$('modal-backdrop').classList.contains('open')){
     const focusable=Array.from($('modal-backdrop').querySelectorAll('button,input,textarea,select,a')).filter(el=>!el.disabled&&el.getClientRects().length);
@@ -415,6 +419,7 @@ async function desktopBoot(){
   if(state.settings.preferences.sidebarCollapsed){baseToggleSidebar();}
   const m=await rpcCall('model/list');if(typeof applyModelCatalog==='function')applyModelCatalog(m,true);else{modelCatalog=m.data||[];currentModel=m.defaultModel||modelCatalog[0]?.model||currentModel;currentEffort=m.defaultReasoningEffort||'medium';fastMode=m.serviceTier==='fast';updateModelAndEffortUI();}
   const settings=await rpcCall('settings/read');currentSandbox=settings.sandboxMode||'workspace-write';updateSandboxUI();
+  if(typeof codexPermissionsRestore==='function')codexPermissionsRestore({...settings,approvalsReviewer:settings.config?.approvals_reviewer||'user',approvalPolicy:settings.config?.approval_policy||'on-request'});
   const account=await rpcCall('account/read');$('account-label').textContent=account.account?.type==='chatgpt'?'ChatGPT':account.account?.type==='apiKey'?'OpenAI API':'Mini ChatGPT';$('account-sub').textContent=account.account?'Settings':'Sign in to send messages';$('account-avatar').textContent='M';
   const settingsNav=document.querySelector('.settings-nav');for(const [sec,label] of [['archived','Archived chats'],['shortcuts','Keyboard shortcuts'],['capabilities','Features & connections']]){const b=document.createElement('button');b.className='settings-nav-btn';b.dataset.sec=sec;b.textContent=label;b.onclick=()=>renderSettingsSection(sec);settingsNav.append(b);}
   updateModeUI();updateCwdUI(currentCwd);await refreshThreads();await newThread(true,true);setupAccessibility();

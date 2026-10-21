@@ -1,0 +1,35 @@
+/* Codex sidebar only. Chat and Work keep their existing sidebar. */
+body[data-mode=codex] .sidebar-section-label { gap:8px; }
+body[data-mode=codex] .codex-sidebar-options { margin-left:auto; padding:2px; display:inline-flex; align-items:center; }
+body[data-mode=codex] .sidebar-section-label > div { order:2; }
+.codex-sidebar-icon { display:inline-flex; width:16px; height:16px; align-items:center; justify-content:center; flex-shrink:0; }
+.codex-sidebar-icon svg { width:100%; height:100%; }
+.codex-sidebar-list .codex-sidebar-group { margin:0 0 8px; }
+.codex-sidebar-group-header { display:flex; align-items:center; min-height:30px; gap:4px; color:var(--text-secondary); }
+.codex-sidebar-group-toggle { position:relative; display:flex; gap:6px; align-items:center; min-width:0; flex:1; padding:6px 6px; border:0; border-radius:7px; background:transparent; text-align:left; cursor:pointer; font-size:12px; color:inherit; }
+.codex-sidebar-group-toggle:hover { background:var(--bg-hover); }
+.codex-sidebar-chevron { position:absolute; left:6px; top:calc(50% - 8px); opacity:0; transform:rotate(90deg); }
+.codex-sidebar-group-toggle[aria-expanded=false] > .codex-sidebar-chevron { transform:none; }
+.codex-sidebar-group-toggle:hover > .codex-sidebar-chevron,.codex-sidebar-group-toggle[aria-expanded=false] > .codex-sidebar-chevron { opacity:1; }
+.codex-sidebar-group-toggle:hover > .codex-sidebar-icon:not(.codex-sidebar-chevron),.codex-sidebar-group-toggle[aria-expanded=false] > .codex-sidebar-icon:not(.codex-sidebar-chevron) { opacity:0; }
+.codex-sidebar-group-no-icon { padding-left:28px; }
+.codex-sidebar-group-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.codex-sidebar-host-state { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px; font-size:10px; color:var(--text-tertiary); }
+.codex-sidebar-pinned-options { padding:2px 7px; opacity:0; }
+.codex-sidebar-group-header:hover .codex-sidebar-pinned-options,.codex-sidebar-pinned-options:focus-visible { opacity:1; }
+.codex-sidebar-group-items .thread-row { padding-left:28px; border-radius:8px; }
+.codex-sidebar-show-more { display:block; width:100%; border:0; border-radius:7px; background:transparent; padding:7px 12px 7px 28px; text-align:left; cursor:pointer; font-size:12px; color:var(--text-tertiary); }
+.codex-sidebar-show-more:hover { background:var(--bg-hover); color:var(--text-primary); }
+.codex-sidebar-empty { padding:7px 28px; font-size:12px; color:var(--text-tertiary); }
+.codex-sidebar-list .codex-sidebar-drop-target { box-shadow:inset 0 2px var(--text-secondary); }
+.codex-sidebar-menu-option { display:flex; align-items:center; gap:7px; }
+.codex-sidebar-check { display:inline-block; width:13px; font-size:12px; }
+.codex-sidebar-group-options,.codex-sidebar-open-project { display:inline-flex; align-items:center; padding:2px 5px; opacity:0; }
+.codex-sidebar-group-header:hover .codex-sidebar-group-options,.codex-sidebar-group-header:hover .codex-sidebar-open-project,.codex-sidebar-group-options:focus-visible,.codex-sidebar-open-project:focus-visible { opacity:1; }
+.codex-sidebar-custom-section > .codex-sidebar-group-items > .codex-sidebar-group { margin-left:12px; }
+.codex-sidebar-section-form { display:grid; gap:10px; }
+.codex-sidebar-section-form .modal-input { margin:0; width:100%; }
+.codex-sidebar-section-error { margin:0; color:var(--red-500,#c54343); font-size:12px; }
+.codex-sidebar-section-error:empty { display:none; }
+.codex-sidebar-section-actions { display:flex; justify-content:flex-end; gap:8px; }
+body:not([data-mode=codex]) #codex-sidebar-options { display:none; }

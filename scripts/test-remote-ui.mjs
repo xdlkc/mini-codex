@@ -27,7 +27,7 @@ function harness(respond){
     renderSettingsSection:async()=>{},openSettingsView:async()=>{},closeSettingsView(){},hideLibrary(){},closeFloatingMenu(){},openFloatingMenuAt(){},menuButton(label,run){const e=element();e.textContent=label;e.onclick=run;return e;},writeClipboardText:async()=>{},
     async newThread(keep=true,skip=false){if(!skip){c.desktop.navigation++;c.saveDraft();}c.currentThread=null;c.restoreDraft();},
     async switchMode(mode){const ticket=++c.desktop.navigation;c.saveDraft();await c.flushDocument();if(ticket!==c.desktop.navigation)return;c.desktop.mode=mode;await c.rpcCall('desktop/settings/update',{mode});await c.newThread(false,true);await c.refreshThreads();},
-    async openThread(id){const ticket=++c.desktop.navigation;c.saveDraft();await c.flushDocument();if(ticket!==c.desktop.navigation)return;const result=await c.rpcCall('thread/resume',{threadId:id});if(ticket!==c.desktop.navigation)return;c.desktop.mode=result.thread.mode;c.currentThread=id;c.updateCwdUI(result.cwd);},
+    async openThread(id){const ticket=++c.desktop.navigation;c.saveDraft();await c.flushDocument();if(ticket!==c.desktop.navigation)return;const result=await c.rpcCall('thread/resume',{threadId:id});if(ticket!==c.desktop.navigation)return;c.desktop.mode=result.thread.mode;c.currentThread=id;c.updateCwdUI(result.cwd);if(typeof c.codexPermissionsRestore==='function')c.codexPermissionsRestore(result.thread);},
     async openProject(){},async refreshThreads(){return c.rpcCall('thread/list',{});},async refreshProjects(){return c.rpcCall('projects/list',{});},
     async refreshModelCatalog(){const result=await c.rpcCall('model/list');c.currentModel=result.defaultModel||c.currentModel;return result;},
     updateCwdUI(cwd){c.currentCwd=cwd;c.rpcCall('workspace/gitStatus',{cwd}).catch(()=>{});},pickNativeFolderForInput:async()=>{},toggleOpenInMenu(){},openScheduledEditor:async()=>{},
@@ -72,6 +72,17 @@ test('late host probes and account reads cannot cover a newer modal or a new vie
 test('opening local Codex from Chat cannot inherit the remembered remote host',async()=>{
   const h=harness();h.c.desktop.mode='chat';h.c.currentThread='local-chat';h.eval(`remoteUi.threads.set('local-chat',null);remoteUi.threads.set('local-codex',null);`);await h.c.openThread('local-codex');assert.equal(h.c.desktop.mode,'codex');assert.equal(h.eval('remoteContext()'),null);assert.equal(h.eval('remoteUi.active'),null);
   await h.c.rpcCall('model/list');assert.equal(h.calls.at(-1).method,'model/list');await h.c.rpcCall('workspace/gitStatus',{cwd:h.c.currentCwd});assert.equal(h.calls.at(-1).method,'workspace/gitStatus');
+});
+test('opening a local chat keeps its saved permissions after the host defaults are restored',async()=>{
+  const h=harness((method,p)=>method==='thread/resume'?{cwd:'/local-thread',thread:{id:p.threadId,mode:'codex',sandboxMode:'read-only',approvalPolicy:'on-request',approvalsReviewer:'user',turns:[]}}:undefined);
+  let selected={approvalsReviewer:'guardian_subagent',approvalPolicy:'never'};
+  h.c.codexPermissionRequest=()=>selected;h.c.codexPermissionsRestore=settings=>{selected={approvalsReviewer:settings.approvalsReviewer||'user',approvalPolicy:settings.approvalPolicy||'on-request'};if(settings.sandboxMode)h.c.currentSandbox=settings.sandboxMode;};
+  h.eval(`remoteUi.threads.set('local-codex',null);remoteUi.local={...remoteUi.local,sandbox:'danger-full-access',approvalsReviewer:'guardian_subagent',approvalPolicy:'never'};`);
+  await h.c.openThread('local-codex');assert.equal(h.c.currentSandbox,'read-only');assert.equal(selected.approvalsReviewer,'user');assert.equal(selected.approvalPolicy,'on-request');assert.equal(h.c.currentCwd,'/local-thread');
+});
+test('selecting a host loads new-chat permissions through that captured connection',async()=>{
+  const h=harness(),contexts=[];h.c.codexPermissionsDefaultsForDraft=async context=>{contexts.push(context.key);await context.call('settings/read');};await h.c.remoteSelect('b');
+  assert.deepEqual(contexts,['b@conn-b']);assert.ok(h.calls.some(call=>call.method==='remote/rpc'&&call.params.connectionId==='conn-b'&&call.params.method==='settings/read'));
 });
 test('remote scheduled Chat/Work threads retain remote model/settings/files routes and new local chats restore local context',async()=>{
   for(const mode of ['chat','work']){const h=harness();h.eval(`remoteUi.threads.set('remote-${mode}','a');`);await h.c.openThread('remote-'+mode);assert.equal(h.c.desktop.mode,mode);assert.equal(h.eval('remoteContext()'),'a');await h.c.rpcCall('model/list');assert.equal(h.calls.at(-1).params.connectionId,'conn-a');await h.c.rpcCall('settings/write',{model:'remote'});assert.equal(h.calls.at(-1).params.connectionId,'conn-a');await h.c.newThread();assert.equal(h.eval('remoteContext()'),null);assert.equal(h.c.currentCwd,'/local');assert.equal(h.eval('remoteUi.active'),'a');}

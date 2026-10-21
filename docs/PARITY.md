@@ -1,6 +1,6 @@
-# ChatGPT 桌面 App 对齐记录
+# Codex 桌面工作台对齐记录
 
-更新日期：2026-10-20。目标：对齐 macOS ChatGPT App 的 Chat、Work、Codex 视觉、交互和产品功能；后端使用 Rust。本轮 Mini、全局入口、Work 本地内容类型与原生核心流程已完成，详见 [本地验收记录](NATIVE_LOCAL.md)。本文另保留完整官方产品的差异，不把本地交付等同于在线生态或像素级一致。
+更新日期：2026-10-21。当前目标已明确为 **Codex**。历史目标：对齐 macOS ChatGPT App 的 Chat、Work、Codex 视觉、交互和产品功能；后端使用 Rust。本轮 Mini、全局入口、Work 本地内容类型与原生核心流程已完成，详见 [本地验收记录](NATIVE_LOCAL.md)。本文另保留完整官方产品的差异，不把本地交付等同于在线生态或像素级一致。
 
 本次范围已由用户确认限定为本地可实现的功能。云同步、分享、多人协作和云执行移出本次范围；下表保留这些产品差异。本地新增内容与原生实际操作结果见下方“本轮本地交付”；真实外部账户/设备与完整官方生态分别保留边界。
 
@@ -15,6 +15,123 @@
 静态证据定位：`app-shared-dc7535e633d7.css`、`app-initial-e7c27dd40beb.css` 提供字体、颜色、间距和圆角 token；`app-initial-90eb42395b7d.js` 提供模式与 sidebar 标签；`thread-app-shell-chrome-448dfc36547b.js` 提供 tabs/panels 标签；`space-sidebar-2a096dadea6b.js` 提供 Work 内容层级；`composer-utility-bar-31c2288673e6.js` 提供执行位置标签；`command-messages-dce42665bef7.js` 提供命令标签。更新参考 App 后，应重新核实文件名和内容。
 
 ## 差异矩阵
+
+### 2026-10-20 Codex 追加对齐（进行中）
+
+本轮用户将范围明确为 **Codex**。参照仍为本机 `26.1013.40934`，不将已有 Chat/Work 功能算作 Codex 对齐完成。
+
+- 外壳增加全局导航栏、前进/后退、居中首页、原始 Codex 图标、项目与执行位置栏、合并模型/思考/速度菜单。来源图标记录在 `assets/codex-mark.svg` 与 `assets/codex-icons.json`；运行时使用主题颜色。
+- 侧栏增加连接/项目/单列表分组、聊天与置顶的独立排序、手动排序、折叠、展开、已读/未读和通知。已连接主机独立读取，失败保留对应主机缓存。自定义分区支持聊天及项目归类；删除分区保留其中内容，归属与折叠状态持久化。
+- Codex 项目持久化目标主机的真实目录。创建和打开均验证目录，不创建缺失的源目录。移动聊天到项目按聊天所属主机读取项目。
+- 新工作树的 `includeLocalChanges` 默认为关闭。打开后保留暂存区与工作区区别、未跟踪文件、删除、二进制、权限与 symlink，源目录和 index 字节保持不变。该选项要求 base 为当前 HEAD；仅额外复制 `.worktreeinclude` 选中的 ignored 普通文件及 ignored `AGENTS.override.md`。无法无损表达的 Git 状态会明确拒绝。失败回滚只清理本次创建的资源。
+- 有运行中回复或 active heartbeat 的聊天在归档前呈现具体操作。取消不修改状态。归档失败会恢复本次暂停的跟进；归档成功后提供撤销。
+
+**尚未达到完整 1:1**：原始桌面参照已捕获并与同尺寸浏览器首页比较；完整菜单、设置、会话内容、原生窗口和全部功能还需逐屏验收。`guardian-approvals` 已接独立模型执行器、官方默认风险策略、模型目录选择与专用授权上下文。普通命令保持原沙箱，失败不会自动提权；持久命令规则使用官方 Starlark 引擎。企业自定义策略和完整原生交互仍待验收。聊天在 checkout 与 worktree 之间的 handoff 也仍缺完整退出/重载与多窗口验收。下表的 pending 不因局部改动自动改为通过。
+
+本轮追加验证：Rust headless 全量 215 passed、3 ignored；10 个相关 JS 脚本 111 passed；Desktop smoke 10 checks / 177 RPCs；Workspace smoke 49 checks / 47 RPCs。浏览器已操作真实 Rust 后端的流式回复、草稿、导航、已读状态、分区和目录项目；模型请求使用 loopback mock。原生窗口已打开并验证模型菜单和选择后的焦点。735 × 953 窄窗口无水平溢出。完整视觉 gate 仍为 blocked，详见 [验收记录](../design-qa.md)与[同尺寸主区域对照](screenshots/38-codex-parity-comparison.png)。
+
+### 2026-10-21 运行恢复与审批补齐
+
+运行环境已恢复。新增 checkout 共享执行锁和移交排他锁，覆盖新的目标工作树、已有工作树、恢复和语音。执行租约保留到最终状态写入结束。
+
+“允许类似命令”将原请求提供的参数前缀保存到本应用 profile 的 `rules/default.rules`。使用固定公开版本的 Codex Starlark 解析、匹配与持久化，以及官方 Bash/PowerShell 解析和危险命令分类。显式拒绝优先，单次批准不保存规则，SSH 规则只写入目标主机。
+
+自动审查使用同版本的官方默认策略、输出 contract 和 JSON schema。按离线模型目录选择隐藏 reviewer、模型 override 和实际支持的推理强度；API key 与 ChatGPT 的默认 reviewer 不同，缺少匹配项时保留父模型回退。模型输入去掉私有展示字段，审查记录单独标明人、自动继续、工具与继承授权的来源。
+
+`thread/approveGuardianDeniedAction` 对非 denied 事件不写入授权。对 denied 事件仅注入该具体动作的 developer 上下文，不执行动作或新建 turn。运行中和取消后的上下文会在执行边界保存；分支保留历史内容，但不将继承授权当作该分支的直接授权。安装版 CLI 已独立验证接口的非 denied、精确上下文与无自动执行行为。
+
+新增许可证及出处见 `src/vendor/CODEX-UPSTREAM.md`。公开源码不等同于安装版，交叉验证只覆盖探针中的行为。最新完整结果和桌面包状态见 [验收记录](../design-qa.md)。
+
+最终验证：Rust headless 260 passed、0 failed、3 isolated workers ignored；前端 303 passed。Release App、DMG、PKG 已生成，签名、DMG 完整性、安装包二进制与 App 一致性及 SHA256 清单通过。最终包 Desktop 10 checks / 177 RPCs，Documents 10 groups / 48 RPCs；本轮 Release 候选的 Handoff 58 checks / 95 RPCs、拒绝恢复 13 checks / 20 RPCs 和原生审批历史/键盘操作通过。现有 5173 预览保留原进程及草稿；新代码由最新桌面包交付。完整 1:1 仍以 [验收记录](../design-qa.md)中的剩余项为准。
+
+### 当前追加验收与候选包状态
+
+前端完整回归 334 passed；最近完成的后端全量为 287 passed、0 failed、3 ignored。工作树复制的最新 debug 实测为 14 场景、66 checks、55 RPCs。11 个移交持久化阶段的独立进程退出恢复、真实归档失败和原生主/弹出窗口往返已验证，历史、Git 文件与草稿均保留。终端 shell 标题跟随 OSC 更新，操作固定标题不被覆盖；缺失的环境选择按参照回退。
+
+最终 App、DMG、PKG 已更新，签名、DMG 完整性、PKG/App 二进制一致与 SHA256 清单通过。最后一轮全量出现 1 项终端关闭测试失败，同时新的 worker 和最新包启动复验停在 macOS 加载阶段，尚未完成；失败原因仍待取得诊断并修复。不能把此前候选包的运行结果当成最后制品通过。具体采样、已完成检查和剩余差异见[验收记录](../design-qa.md)。
+
+### 2026-10-21 本地环境与工作树复制（本地流程已复验）
+
+参照同版本安装包的 local-environment editor、settings、worktree dropdown 及 host worker。环境使用 `.codex/environments/*.toml`，按默认文件名、父目录距离和路径排序。设置页现按项目展示本地与继承配置，提供详情及编辑；新增配置依次使用 `environment.toml`、`environment-2.toml` 等空闲文件名。保存使用 SHA256 revision 比较，冲突保留草稿且要求重新加载。编辑现有配置不切换选中环境，保存不会执行设置脚本。
+
+新工作树仅在明确选择配置时运行 Bash 设置脚本。配置映射遵循 tracked/untracked/ignored 和目标分支文件优先规则。平台脚本为空时回退通用脚本。设置失败保留工作树、输出和重试入口；停止会终止对应进程组。导出和取消导出的环境变量写入工作树 Git admin 目录，后续 shell 和顶部操作继承这些差异。聊天分支入口仍传空环境，不自动运行设置。
+
+归档先保存清理前的可恢复快照，再运行所选环境的清理脚本。失败或取消保留 checkout；成功后另保留清理产物快照，再删除 checkout。恢复还原清理前的文件和 shell 环境。清理期间释放 registry 锁，状态和取消 RPC 可响应。创建本地工作树还按安装包的 Git 交集规则复制 `.worktreeinclude` 选中的 ignored 普通文件及 ignored `AGENTS.override.md`；不会覆盖目标文件，不经目标 symlink 目录复制。
+
+前端全量 315 passed；环境 smoke 19 checks / 189 RPCs，fork smoke 35 checks / 34 RPCs。浏览器已操作保存、详情、新工作树设置和顶部操作，并核对真实文件及导出变量；500 × 900 下无页面水平溢出。[编辑](screenshots/53-codex-environment-editor.png)、[详情](screenshots/54-codex-environment-details.png)、[设置完成](screenshots/55-codex-environment-ready.png)及[操作结果](screenshots/56-codex-environment-action.png)已留证。首次完整后端回归暴露旧 checkout 未启用 worktreeConfig 时的归档兼容错误，以及通用创建入口错误阻止活动源聊天，均已修复。最终 Rust headless 272 passed、0 failed、3 ignored；包内 Environment 19 checks / 201 RPCs、Workspace 49 checks / 47 RPCs、Handoff 58 checks / 94 RPCs、Desktop 10 checks / 177 RPCs 通过，签名、DMG、PKG/App 一致性与 SHA256 清单通过。原生副本读取并编辑保存已有配置，磁盘与成功反馈一致。交互式 PTY、完整原生流程及同状态参照视觉仍为 pending。
+
+### 2026-10-21 交互式终端追加
+
+Codex 终端已从单次 shell 输出改为真实 PTY。渲染器固定为 xterm 6.0.0 / addon-fit 0.11.0，版本、integrity、可重复提取脚本及 MIT 许可证见 `src/vendor/terminal/` 与 `src/vendor/LICENSE-XTERM*.txt`。环境顶部操作在交互 shell 中运行，继承工作树保存的导出变量。终端按聊天、目录、连接隔离；页面重载可重新附加，后台输出继续接收。输入有序，重放不向 shell 回送历史设备响应，输出有背压与有界重放缓存。停止时先解除背压并释放 PTY master，再回收 shell，最后释放 checkout 租约。
+
+后端全量 279 passed、0 failed、3 ignored。包内 Terminal 14 checks / 102 RPCs、Environment 19 checks / 188 RPCs、Workspace 49 checks / 47 RPCs、Handoff 58 checks / 94 RPCs 通过。浏览器和原生执行、中文、ANSI、重载恢复、独立 shell 状态及停止实际写入进程已留证，详见 [验收记录](../design-qa.md)。这些结果不代表完整参照视觉通过。
+
+环境编辑器随后按参照补齐操作图标、空白行处理、缺项提示及原样脚本保存。文件格式包含同样的自动生成注释与多行字符串。图标来自安装包 `app-shared-52443cbe9ac4.js` 的 `gear-light-20`、`play-light-20`、`ladybug-light-20`、`flask-light-20`，渲染时使用主题颜色。前端全量 328 passed；5 组空白、引号及换行的 TOML roundtrip 通过，实屏保存也验证了文件内容与无执行副作用。最终 UI App、DMG、PKG 已更新；包内 Terminal 14 checks / 101 RPCs、Desktop 10 checks / 177 RPCs，以及签名、DMG、PKG/App 一致性与 SHA256 清单通过。
+
+### Codex 分支执行位置追加实现
+
+`thread/fork` 增加 `destination: current | newWorktree`。默认保留既有副本行为。新工作树分支采用当前 HEAD 的 detached checkout 和工作目录文件状态，保留子目录映射，不移动原目录。完整历史与有效 UI 快照写入成功后才登记聊天和工作树归属；失败会移除本次未变更的新资源。工作树有后续编辑、ignored 文件或另一归属时保留资源并返回具体路径。新分支不复制 Goal 或计划任务执行器，也不接走原草稿。
+
+分支复制现直接遵循安装版 worker 的 Git 序列：复制 index（含 split index 的 shared index），在私有 index 中 `git add -u`，生成 binary diff，再在目标私有 index 中 `git apply --3way`。源 index 字节保持不变，目标真实 index 保持 HEAD。外部 attributes 与 filter 不参与；仓库 `.gitattributes` 仍生效。因此 CRLF、Git 可执行位和空目录按 Git 规则处理。未跟踪文件保留原始内容、权限和 symlink 目标。通用“新工作树并携带改动”保留其原有暂存区契约。
+
+已用隔离仓库重放同版本源代码的 13 种 Git 序列，并通过真实 app-server 验证 14 种状态（66 checks / 55 RPCs）。覆盖 intent-to-add、assume-unchanged、skip-worktree、sparse index、未合并 index、split index、三种子模块状态、外部 attributes、换行/模式规范化，以及未跟踪的聊天子目录。源代码序列重放不等于原版桌面入口验收。嵌套仓库按参照规则处理：无 HEAD 时跳过；有 HEAD 时因 host 使用非递归复制而拒绝，源文件保持不变。错误文案、失败后的桌面流程及完整参照视觉仍待逐项核对。失败清理使用独立文件指纹；无法证明未变化时保留 checkout。
+
+前端提供“分叉”子菜单、“在同一工作树中创建聊天分支”“在新工作树中创建聊天分支”与“在此工作树中新建聊天”。标题采用参照的来源族序号，归档来源也参与计算。浏览器和原生主流程已操作验证，见[浏览器菜单](screenshots/39-codex-fork-worktree.png)和[原生菜单](screenshots/40-native-codex-forks.png)。本轮分支 smoke 为 35 checks / 34 RPCs / 3 次 loopback 模型请求；11 个相关 JS 脚本 118 passed；Rust 全量 217 passed、3 ignored，另有 2 个清理边界用例通过。桌面包已重新构建。
+
+### Handoff 参照契约与实现进度
+
+本机 `thread-handoff-modal-5d73d64594f5.js`、`app-initial-90eb42395b7d.js` 与 `.vite/build/worker.js` 提供了以下直接证据。下面的完整契约尚未全部实现。
+
+- 移到新/已有工作树时，参照执行 `move-thread-to-worktree`：创建或复用工作树，暂存源改动，切换本地分支，保存已有目标改动，检出工作树分支，应用源改动。目标不是默认分支；需要时用户选择本地 checkout 留下的分支。已有目标的改动不能被丢弃。
+- 带回本地时，参照执行 `move-thread-to-local`：目标 checkout 必须干净。源工作树先暂存改动并 detach，目标检出对应分支，再应用改动。分支被其它工作树使用、同名分支指向不同提交、应用冲突和回滚失败均有专门反馈。
+- Git 阶段完成后，参照 fork 到目标目录，再转移标题、置顶与界面状态，并归档原聊天。Git 操作完成后才出现的聊天创建或清理失败不能被冒充为完整成功。
+- 正在运行的源回复有中断提示；直接移入已有工作树需要等待当前回复结束。系统中断先暂停活动 Goal。新聊天不继承 Goal；闲置的活动 Goal 与已暂停 Goal 保留在原聊天。归档后原聊天不再执行。host 的 `handleArchivedThreadSideEffects` 删除关联 heartbeat 定义，不把它们转到新聊天。官方 CLI 的隔离 fork/archive/unarchive 实验也验证了 Goal 的上述行为。
+
+当前新增后端 `thread/handoff`，方向为 `toWorktree | toLocal`。它按聊天保存的目录执行，不接受调用方替换源目录。Git 阶段支持新建/复用工作树、源分支转移、本地分支切换、源改动暂存/应用，以及已有目标改动的独立 stash 保留。带回本地要求目标无 tracked/untracked 改动，并拒绝同名分支的提交不一致。应用使用参照的 `git stash apply`，没有 `--index`；它不恢复原有文件的暂存标记，但 Git 自身仍可能暂存新增文件。
+
+Git 准备成功后，协调层复制历史与 UI 快照，保留标题、置顶、项目、搜索和推理强度，再登记目标归属并归档原聊天。与参照一致，Git 已移动但聊天复制失败时保留 Git 结果，由原聊天登记工作树归属，并返回警告；不再回滚已成功的 Git 移动。复制成功后的来源归档失败同样保留新聊天与 Git 结果并报告警告。警告写入持久迁移记录，超时查询可恢复同一结果。迁移记录写入 workspace registry；两侧原文件、权限、symlink、目录和原始 index 有 Git recovery refs，原暂存 blob 也由真实 tree 保持可达。Git 准备失败的回滚会核对文件/index/HEAD，新编辑或归属变化会阻止清理。`workspace/handoff/inspect` 返回待恢复记录；`workspace/handoff/rollback` 只接受同一 repository 的未完成操作，不会撤销已提交操作。
+
+实际 stash 也保存独立 recovery ref，之后清理 stash 列表不会使其对象图失去保护。这保留了 Git 暂存期间捕获的完整数据。建立该保护失败时，回滚保留原 stash 项；错误会带迁移恢复记录 ID。
+
+`continueExisting: true` 提供另一路径：把聊天接入选中的已有工作树，不移动任何分支、index 或工作文件；两侧有本地改动也会保留。该路径要求源回复先结束，不接受以中断方式继续。已有工作树的聊天目录也按来源子目录映射。
+
+执行位置菜单现已接入“移动到工作树”“移动到主检出”。对话框支持新建工作树、选择已有工作树直接继续，以及带回本地。分支选择、运行中回复提示、本地 dirty 状态阻止、分步进度、失败/未知结果和成功状态均已有界面。`thread/handoff/inspect` 返回聊天资格与 Git 状态；`thread/handoff/status` 用请求 ID 查询实际协调任务或持久结果。状态查询不会返回完整文件清单。界面会保存来源主机，禁止超时后重复提交；迟到结果通过“打开”操作交回用户，不抢走新视图。
+
+已接文字草稿、附件、文件引用、打开标签、置顶顺序和侧边栏分区的迁移。目标已有草稿时保留完整来源草稿，不混合附件。Inspector 会使用目标目录重新加载。已有文件图标和 420px compact 对话框宽度来自参照包；[原生确认界面](screenshots/41-native-codex-handoff.png)、[原生状态转移](screenshots/42-native-codex-handoff-state.png)、[既有工作树选择](screenshots/43-codex-handoff-existing.png)已留证。500 × 900 视口无水平溢出；Tab 焦点循环与 Escape 返回执行位置按钮已实测。
+
+Goal 与 heartbeat 已按上述参照语义接入。移交使用跨进程来源锁；来源 Goal 修改/清除、heartbeat 创建/修改/删除/手动运行，以及文字和语音启动均受排他保护。活动 turn 的执行锁保留至最终快照和计数写入，移交会等待自己中断的回复完成收尾；另一窗口持有执行锁时拒绝移动。重启发现未完成 Git 记录时阻止来源续跑，需先查询和恢复该操作。成功归档保留 Goal 账本、删除 heartbeat 定义并保留 run 历史；恢复归档聊天后，原活动 Goal 才重新具备续跑资格。归档界面的“撤销”只还原聊天。语音调用和待发送队列仍阻止移交。
+
+Handoff 追加验证：11 个持久化阶段在独立进程中直接退出，重开 registry 后均可恢复两侧原始文件、index 和分支。真实文件系统归档失败通过 7 checks / 9 RPCs，保留已完成 Git 移动和新聊天，并在重启后返回同一警告。原生开发候选已完成主窗口→新工作树→弹出窗口续聊→主窗口同步→带回本地，核对实际分支、文件、原聊天归档和草稿；见[原生往返](screenshots/66-native-handoff-roundtrip.png)。正常 Quit 退出码为 0，草稿保持。此候选只调整测试副本的 bundle 标识、本地签名与调试二进制。Git 命令执行中强制退出、页面重载和全部参照视觉状态仍未完整验收。checkout 级跨进程排他已在后续实现并回归。
+
+继续回复的验收同时修复了标题和引用问题：已命名聊天不再被新输入覆盖标题。发送后会清理附件与引用草稿；工作区文件内容仅进入模型上下文，消息回放保留可预览的文件卡片。新记录不会把 `<workspace_file>` 展开正文显示为用户输入；历史旧记录保留原数据。
+
+追加验证：Rust 全量 232 passed、3 ignored；随后引用呈现修复另跑 appserver 7 项通过。Handoff smoke 42 checks / 36 RPCs / 3 次 loopback 请求；Turn smoke 9 checks / 53 RPCs / 15 次 loopback 请求。前端 9 个相关脚本 93 项通过。完整范围与限制见 [验收记录](../design-qa.md)。
+
+Goal/heartbeat 与部分失败语义修正后的追加验证：Rust 全量 233 passed、3 ignored；随后新增的 2 项 scheduler 边界测试随该模块复验通过（19 passed、1 ignored）。前端相关 9 个脚本 94 passed；另含语音与调度界面的 4 个脚本 65 passed。Handoff smoke 为 56 checks / 91 RPCs / 4 次 loopback 模型请求，覆盖真实跨进程锁、Goal 计数保留、归档后重启不续跑、显式取消归档后续跑、heartbeat 清理，以及 Git 成功/聊天复制失败后保留原聊天与持久警告。Automations 12 checks / 349 RPCs、Voice 9 groups / 74 RPCs、Turn 9 checks / 53 RPCs、Desktop 10 checks / 177 RPCs 通过，均使用隔离目录与本机 mock。浏览器实测[复制失败警告](screenshots/44-codex-handoff-warning.png)：原聊天、Goal 和文字草稿保留；警告对话框宽 420px，无水平溢出；技术原因可展开“详情”。桌面调试包已更新。
+
+### Codex 自动审批追加实现
+
+本机 CLI `0.163.0-alpha.10.2` 的 schema 确认了 reviewer、事件及状态；安装包的权限菜单确认了“请求批准”“帮我批准”“完全访问权限”标签。公开实现的 [reviewer 权限与工具策略](https://github.com/openai/codex/blob/main/codex-rs/ext/guardian-reviewer/src/settings.rs)和[输出协议](https://github.com/openai/codex/blob/main/codex-rs/ext/guardian-reviewer/src/assessment.rs)作为补充证据，不能替代同版本桌面的完整行为验收。
+
+新增独立审批运行器。`guardian_subagent` 与 `auto_review` 共用此运行器，`user` 保留人工路径。审查绑定原工具参数和目录，以独立上下文调用当前所选模型。检查工具仅暴露只读、禁网的 shell；不会提供 patch、MCP、插件或升级权限。批准只放行本次动作，不修改原沙箱或 session approval cache。拒绝、非法输出与超时均不执行动作；中断会取消正在进行的请求并报告 aborted。JSON 格式错误最多尝试三次，完整审查限 90 秒，输入和输出有大小上限。实际 usage 进入 turn 与 Goal 计数，审查耗尽预算后不执行动作。
+
+`thread/settings/update` 已支持权限字段，未支持的其它设置会明确报错。Reviewer、审批策略和沙箱随聊天保存，分支与重启保留；下一模型步骤读取最新设置，已开始的审查保留发起时的权限。界面接入三项权限选择、完全访问的产品确认，以及工具旁的审查进度和原因。新聊天读取所在主机的默认值，读取期间禁止输入；失败时不会沿用上一聊天的权限。[菜单](screenshots/45-codex-permissions.png)与[结果](screenshots/46-codex-approval-review.png)已留证。浏览器实测使用预先配置的隔离 profile 和本机 mock：审查前文件不存在，批准后实际创建，重新加载后仍显示审查记录。
+
+完整 Auto-review 仍为 pending。普通沙箱执行、显式额外访问和路径保护已通过真实回归；当前使用固定版本官方默认策略，已接目录驱动的模型选择、持久命令规则及 `thread/approveGuardianDeniedAction` 精确授权上下文。原生 Release 已验证发送、拒绝、历史恢复和键盘展开详情。账户切换、企业自定义策略与全部原生失败情形尚未完整验收。非 macOS 主机尚缺受管只读沙箱，不会自动放行；mock 验证不代表真实模型的风险判定准确率。
+
+新增审批 smoke：32 checks / 38 RPCs / 34 次 loopback 请求；新权限界面脚本 13 passed，相关 8 个脚本共 93 passed。Rust 全量 236 passed、3 ignored；后续 appserver 9、agent 6、session 9、API 19 项通过。API 不接受模型返回的 user、developer 或 system 消息。审批结果使用独立内部字段记录，不根据输出文字判断；该字段不进入模型上下文，拒绝的提案不计为 Goal 的实际工作。显式策略可覆盖启动默认值，权限自定义组合不会误标成自动审查。Turn、Automations 与 Handoff 回归也通过。桌面调试包已更新；完整证据与限制见 [验收记录](../design-qa.md)。
+
+### 沙箱执行与批准时机追加修正
+
+以同一本机官方 CLI 的独立配置、本机 Responses mock 和临时 Git 目录执行探针。模型输出通过 `response.output_item.added` 与 `done` 发送，命令确实进入官方执行链路。工作区普通写入没有审批；越界普通写入直接被沙箱拒绝，不会自动升级重试。显式 `require_escalated` 请求一次批准，批准前文件不存在，批准后写入成功。Never 策略拒绝显式升级，不弹审批。工作区内普通补丁直接应用；只读或越界补丁申请批准。文件的 `acceptForSession` 只覆盖该路径，另一文件和 shell 权限仍需独立处理。命令批准的 `cancel` 会中断 turn，模型不再收到下一次请求。普通命令不能写入工作区内的 `.git`、`.codex` 或 `.agents`。
+
+实现已据此区分普通执行与额外访问。批准请求携带实际工作目录、理由与补丁路径；额外命令支持单次授予，以及保存原请求提供的 execpolicy 前缀。拒绝发送 `decline`，`cancel` 协议动作则中断整轮。文件授权按解析后的路径缓存，等待批准期间路径改变会拒绝应用。补丁目标的不存在后缀会先处理 `..`，避免误判为工作区内。Stop 和超时会终止本次命令的进程组，超时报告失败；输出有大小上限。持久命令规则已在后续补齐并与安装版 CLI 交叉验证；完整权限系统仍按未验收项目保留 pending。
+
+权限 smoke 在最后两处路径保护修复前为 17 checks / 19 RPCs / 24 次本机模型请求；审批 smoke 为 33 checks / 40 RPCs / 35 次本机请求，Turn 与 Automations 回归通过。随后增加元数据保护与缺失父目录越界用例。当前新测试进程停在系统加载阶段，未进入 libtest，最新回归未完成。相同元数据保护表达式已用系统 `sandbox-exec` 单独确认拒绝写入，但不能替代 Rust 用例。桌面包仍保留上一轮已验证版本。详见 [验收记录](../design-qa.md)。
+
+追加核对安装包 `pending-request-item-panel-a6ee45e20086.js` 与公共审批卡片：参照的“拒绝”发送 `decline`，不会因 CLI 的可选值含 `cancel` 就显示为取消；命令理由直接作为标题。Codex 卡片已修正这一区别，采用“终端”/“编辑文件”标识、灰阶样式，以及“允许一次”旁的文件授权下拉。下拉的“允许所有修改”采用参照文字；后端授权范围仍以上述真实 CLI 探针为准。命令规则尚未实现时不展示“允许类似命令”。
+
+现有权限测试与新增审批卡片测试通过临时适配器在系统 JavaScriptCore 的独立 Realm 中运行，23 项通过；这不等于 Node 完整测试套件通过。隔离浏览器页装载生产渲染器和 `renderPendingApprovals`，实际点击验证 `acceptForSession`、`decline`、`accept`，并检查菜单键盘移动、Escape 返回和待审批记录清理。[范围菜单](screenshots/47-codex-approval-options.jpg)与[窄窗口](screenshots/48-codex-approval-narrow.jpg)已留证。500px 视口的 `scrollWidth` 为 500，菜单在边界内；控制台无 warning/error。夹具不执行 Rust 命令，不能替代最新后端回归或原生端到端验收。
 
 `pending` 表示该项对齐验收尚未完成。实现了本地基础功能，不等于完成整个参考能力。
 

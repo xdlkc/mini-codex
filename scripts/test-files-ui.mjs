@@ -6,9 +6,9 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../src/gui_files.js',import.meta.url),'utf8');
 const plain=value=>JSON.parse(JSON.stringify(value));
 function deferred(){let resolve;const promise=new Promise(yes=>resolve=yes);return {promise,resolve};}
-function harness(respond=()=>({})){
+function harness(respond=()=>({}),send=async()=>{}){
  const nodes=new Map(),calls=[],prefs=[],closed=[];
- function element(){const classes=new Set();return {children:[],textContent:'',value:'',style:{},classList:{add:k=>classes.add(k),contains:k=>classes.has(k)},querySelectorAll(){return [];},querySelector(){return null;},prepend(){},append(){}};}
+ function element(){const classes=new Set();return {children:[],textContent:'',value:'',style:{},dataset:{},classList:{add:k=>classes.add(k),contains:k=>classes.has(k)},querySelectorAll(){return [];},querySelector(){return null;},prepend(){},append(...nodes){this.children.push(...nodes);}};}
  const node=id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);};
  const context=vm.createContext({console,Map,Set,Promise,Array,Number,Object,String,Uint8Array,setTimeout,clearTimeout,
   desktop:{mode:'work',navigation:0,state:{settings:{preferences:{attachmentDrafts:{work:[{type:'attachment',id:'saved',attachmentId:'saved',name:'saved.pdf',parseStatus:'ready'}]},mentionDrafts:{work:['README.md']}}}}},
@@ -16,7 +16,7 @@ function harness(respond=()=>({})){
   $:node,document:{createElement:element,body:element()},
   draftKey(){return context.currentThread||context.desktop.mode;},saveDraft(){},restoreDraft(){},savePreferences:async patch=>prefs.push(plain(patch)),
   renderComposerChips(){node('composer-chips').children=[...context.mentionedFiles,...context.desktopAttachments].map(element);},
-  updateSubmitButton(){},sendTurn:async()=>{},retryLastTurn:async()=>{},showLibrary:async()=>{},upsertTimelineItem(){},
+  updateSubmitButton(){},sendTurn:async()=>send(context),retryLastTurn:async()=>{},showLibrary:async()=>{},upsertTimelineItem(){},CSS:{escape:String},previewWorkspaceFile:path=>closed.push({preview:path}),
   rpcCall(method,params={}){calls.push({method,params});return Promise.resolve(respond(method,params));},
   showError(){},toast(){},saveDraft(){},syncShellNavigation(){},itemEls:new Map(),
  });context.window=context;context.__requestClose=async()=>closed.push(true);vm.runInContext(source,context);context.fileBase64=async()=> 'bG9jYWwgZmlsZQ==';
@@ -52,4 +52,15 @@ test('stored image references avoid sending a second copy while legacy inline im
 test('unreadable imports remain visible but cannot start a model request',async()=>{
  const h=harness(method=>method==='files/import'?{attachment:{...card,parseStatus:'no_text'}}:{});await h.context.addAttachments([{name:'scan.pdf',size:50}]);
  assert.equal(h.context.desktopAttachments[0].parseStatus,'no_text');await h.context.sendTurn();assert.ok(!h.calls.some(call=>call.method==='turn/start'));assert.equal(h.node('submit-btn').disabled,true);
+});
+test('a successful mention-only send clears both draft maps before reopening the chat',async()=>{
+ const h=harness(()=>({}),async context=>{context.desktopAttachments=[];context.mentionedFiles=[];context.currentThread='created';});h.context.restoreDraft();h.context.desktopAttachments=[];h.context.saveDraft();await h.context.sendTurn();
+ assert.equal(h.state.mentions.has('work'),false);assert.equal(h.state.mentions.has('created'),false);assert.equal(h.state.drafts.has('work'),false);assert.equal(h.prefs.at(-1).mentionDrafts.work,undefined);
+});
+test('a newer file or mention draft is preserved while a send finishes',async()=>{
+ const waiting=deferred(),h=harness(()=>({}),async context=>{context.desktopAttachments=[];context.mentionedFiles=[];await waiting.promise;});h.context.restoreDraft();const sending=h.context.sendTurn();await Promise.resolve();h.context.mentionedFiles=['new.rs'];h.context.saveDraft();waiting.resolve();await sending;assert.deepEqual(plain(h.state.mentions.get('work')),['new.rs']);
+});
+test('workspace references render as file cards without copying model-only file content into the bubble',()=>{
+ const h=harness(),bubble=h.node('bubble');h.context.itemEls.set('user',{querySelector:()=>bubble});h.context.upsertTimelineItem({id:'user',type:'userMessage',workspaceFiles:[{path:'src/中文.rs',name:'中文.rs'}]});
+ assert.equal(bubble.children[0].textContent,'@中文.rs');assert.equal(bubble.children[0].dataset.workspacePath,'src/中文.rs');bubble.children[0].onclick();assert.deepEqual(h.closed,[{preview:'src/中文.rs'}]);
 });

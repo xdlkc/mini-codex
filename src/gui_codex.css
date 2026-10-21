@@ -1,0 +1,88 @@
+/* Codex 26.1013.40934: native toolbar, connection sidebar, execution strip, composer. */
+#codex-window-toolbar,#codex-execution-bar,#codex-composer-options,#codex-effort-summary{display:none}
+body.codex-chrome{--sidebar-width:288px;--thread-max-width:768px;-webkit-font-smoothing:antialiased}
+body.codex-chrome.light{background:#f7f7f7}
+html.light body.codex-chrome{--bg-primary:#fff;--bg-sidebar:#f7f7f7;--bg-subtle:#fbfbfb;--composer-bg:#fff}
+html.dark body.codex-chrome{--bg-primary:#181818;--bg-sidebar:#101010;--bg-subtle:#141414;--composer-bg:#232323}
+body.codex-chrome #app{padding-top:44px;background:var(--bg-sidebar)}
+body.codex-chrome #main-col,body.codex-chrome #sidebar,body.codex-chrome #inspector-drawer{height:100%;min-height:0}
+body.codex-chrome #codex-window-toolbar{display:flex;position:absolute;inset:0 0 auto;height:44px;align-items:center;gap:2px;padding:0 10px 0 88px;z-index:40;color:var(--text-tertiary)}
+.codex-toolbar-spacer{flex:1}
+#codex-window-toolbar .icon-btn{width:32px;height:32px;font-size:19px}
+#codex-notifications{display:none;position:relative}
+body.codex-chrome #codex-notifications{display:inline-flex;margin-left:auto;width:28px;height:28px}
+#codex-notifications.has-unread:after{content:'';position:absolute;width:5px;height:5px;background:#3285ff;border-radius:50%;right:5px;top:4px}
+body.codex-chrome #desktop-app-rail{padding-top:8px;gap:8px}
+body.codex-chrome .rail-drag,body.codex-chrome .sidebar-top{display:none}
+body.codex-chrome #sidebar{background:var(--bg-subtle);border-right:1px solid var(--border-subtle)}
+body.codex-chrome .desktop-mode-header{height:52px;padding:0 16px;flex-shrink:0}
+body.codex-chrome .desktop-mode-button{font-size:21px}
+body.codex-chrome .sidebar-nav{padding:0 8px 10px}
+body.codex-chrome .sidebar-nav>.codex-only{display:none!important}
+body.codex-chrome #nav-home{font-size:16px;border-radius:6px;background:transparent}
+body.codex-chrome #nav-home .shortcut{display:none}
+body.codex-chrome .sidebar-section-label{font-size:16px;padding-left:16px;padding-right:16px}
+body.codex-chrome .codex-sidebar-group-toggle{font-size:16px;min-height:32px}
+body.codex-chrome .thread-row{font-size:16px;min-height:31px;padding-top:4px;padding-bottom:4px;border-radius:6px}
+body.codex-chrome .codex-sidebar-show-more{font-size:16px;padding-top:4px;padding-bottom:4px}
+body.codex-chrome #main-col{border-radius:14px 14px 0 0;overflow:hidden;background:var(--bg-primary);margin-right:4px}
+body.codex-chrome:not(.has-messages):not(.in-settings):not(.in-scheduled) #topbar{display:none}
+body.codex-chrome #topbar{padding:0 16px;height:48px;min-height:48px}
+body.codex-chrome #main-col{container-type:inline-size;container-name:codex-workspace}
+body.codex-chrome #topbar .topbar-left{min-width:0;flex:1}
+body.codex-chrome #topbar .topbar-right{min-width:0;gap:6px}
+body.codex-chrome #branch-badge{white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis;min-width:0}
+@container codex-workspace (max-width:700px){
+  body.codex-chrome #branch-badge{display:none!important}
+  body.codex-chrome #topbar .topbar-right{flex-shrink:0;gap:4px}
+  body.codex-chrome #topbar .topbar-right>.pill-badge{white-space:nowrap;padding:4px 8px}
+  body.codex-chrome #openin-btn>span,body.codex-chrome #topbar button[title="Browse workspace files"]>span,body.codex-chrome #topbar button[title="Quick shell command"]>span,body.codex-chrome #topbar .diff-stat-add,body.codex-chrome #topbar .diff-stat-del{display:none}
+}
+body.codex-chrome #topbar-sidebar-btn{display:none!important}
+body.codex-chrome #home-hero{gap:24px;padding-bottom:0;max-width:none;width:100%;margin:0;transform:translateY(10px)}
+body.codex-chrome .hero-heading{font-size:32px;line-height:1.3;font-weight:400;letter-spacing:0;text-align:center}
+.codex-hero-project{text-decoration-line:underline;text-decoration-style:dotted;text-decoration-color:var(--text-tertiary);text-underline-offset:6px;text-decoration-thickness:1px}
+body.codex-chrome #home-hero .codex-emblem{display:flex;color:var(--text-tertiary);opacity:.55;width:48px;height:48px;margin:0}
+body.codex-chrome #home-hero .codex-emblem svg{width:56px;height:56px;max-width:none;flex-shrink:0}
+body.codex-chrome .hero-sub,body.codex-chrome .starter-grid{display:none}
+body.codex-chrome #composer-host{max-width:784px;padding:0 24px 18px;position:relative;flex-shrink:0}
+body.codex-chrome #codex-execution-bar{display:flex;align-items:center;gap:8px;height:38px;margin:0 14px -1px;padding:0 10px;background:var(--bg-hover);border:1px solid var(--border-subtle);border-bottom:0;border-radius:18px 18px 0 0}
+body.codex-chrome #codex-execution-bar #project-pill-btn,body.codex-chrome #remote-location{display:inline-flex;align-items:center;border:0;padding:6px 4px;background:transparent;font-size:14px;color:var(--text-primary);max-width:45%;min-width:0}
+body.codex-chrome #cwd-pill-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.codex-chrome #project-pill-btn>span:last-child{display:none}
+body.codex-chrome #codex-workspace-settings{margin-left:auto;width:28px;height:28px}
+body.codex-chrome .composer-pill{border-radius:24px;padding:12px 10px 10px;border:1px solid var(--border-subtle);background:var(--composer-bg);box-shadow:0 2px 8px #00000005;position:relative}
+body.codex-chrome #composer-input{min-height:42px;padding:2px 2px 12px;font-size:16px;line-height:24px}
+body.codex-chrome .composer-bar{display:flex;align-items:center;justify-content:space-between;gap:2px}
+body.codex-chrome .composer-controls-left{display:flex;flex:0 1 auto;flex-wrap:nowrap;min-width:0}
+body.codex-chrome .composer-controls-left>#effort-pill-btn{display:none}
+body.codex-chrome #workspace-environment,body.codex-chrome #web-search-control{display:none!important}
+body.codex-chrome #sandbox-pill-btn{font-size:14px;overflow:hidden;min-width:0;color:var(--text-tertiary);padding:5px 4px}
+body.codex-chrome #sandbox-pill-btn>span:last-child{display:none}
+body.codex-chrome #sandbox-pill-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.codex-chrome #codex-composer-options{display:flex;align-items:center;justify-content:flex-end;gap:3px;min-width:0;margin-left:auto}
+body.codex-chrome #model-pill-btn{display:flex;gap:4px;font-size:14px;min-width:0;padding:5px 3px;white-space:nowrap}
+body.codex-chrome #model-pill-text{max-width:180px;overflow:hidden;text-overflow:ellipsis}
+body.codex-chrome #model-pill-btn>svg{width:14px;height:14px}
+body.codex-chrome #codex-effort-summary:not([hidden]){display:inline;color:var(--text-tertiary)}
+body.codex-chrome #voice-composer-controls{margin-left:0;gap:2px}
+body.codex-chrome #dictation-button{width:28px;height:28px}
+body.codex-chrome #voice-button{width:28px;height:28px;border-radius:50%;padding:5px;background:#3285ff;color:#fff}
+body.codex-chrome #voice-button>span{display:none}
+body.codex-chrome #submit-btn:disabled{display:none}
+body.codex-chrome:has(#submit-btn:not(:disabled)) #voice-button{display:none}
+.codex-model-menu{width:320px;max-height:min(720px,calc(100vh - 40px));padding:6px}
+.codex-model-menu>*{flex-shrink:0}
+.codex-model-menu .menu-item{border-radius:8px;min-height:40px;gap:12px}
+.codex-model-menu .menu-item[aria-checked=true]{background:var(--bg-hover)}
+.codex-model-menu .menu-check{width:18px;height:18px;flex-shrink:0}
+.codex-model-menu .menu-item-text{min-width:0;display:flex;flex:1;flex-direction:column;gap:3px}
+.codex-model-menu .menu-item-text strong{font-size:14px;font-weight:500}
+.codex-model-menu .menu-item-text small{font-size:12px;line-height:1.4;color:var(--text-tertiary)}
+.codex-model-divider{border-top:1px solid var(--border-subtle);margin-top:5px;padding-top:10px}
+.codex-thinking-options{display:flex;flex-wrap:wrap;padding:0 6px 8px;gap:4px}
+.codex-thinking-options .menu-item{width:auto;min-height:30px;flex:1 0 auto;padding:4px 8px;font-size:12px;justify-content:center}
+@media(max-width:1000px){body.codex-chrome{--sidebar-width:256px}body.codex-chrome .hero-heading{font-size:26px}body.codex-chrome #model-pill-text{max-width:145px}}
+@media(max-width:760px){body.codex-chrome #sidebar:not(.collapsed){top:44px;height:calc(100% - 44px);left:48px;width:256px;min-width:256px;z-index:35}body.codex-chrome #composer-host{padding:0 12px 12px}body.codex-chrome #codex-execution-bar{margin:0 10px -1px}body.codex-chrome #home-hero{padding:0 20px}body.codex-chrome #model-pill-btn{font-size:12px}body.codex-chrome #model-pill-text{max-width:120px}body.codex-chrome #sandbox-pill-text{max-width:90px}body.codex-chrome #codex-effort-summary{display:none!important}body.codex-chrome .hero-heading{font-size:23px}}
+body:is(.native-mini,.native-popout).codex-chrome #codex-window-toolbar,body:is(.native-mini,.native-popout).codex-chrome #codex-execution-bar{display:none!important}
+body:is(.native-mini,.native-popout).codex-chrome #app{padding-top:0}

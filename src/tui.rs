@@ -29,7 +29,7 @@ struct State {
     busy: bool,
     assist_open: bool,
     scroll_back: usize,
-    approval: Option<(String, oneshot::Sender<Verdict>)>,
+    approval: Option<(String, oneshot::Sender<Verdict>, Option<Verdict>)>,
     header: String,
 }
 
@@ -68,7 +68,7 @@ fn style(k: Kind) -> (Style, &'static str) {
 }
 
 fn ui(f: &mut Frame, s: &State) {
-    let bottom_h = if s.approval.is_some() { 6 } else { 3 };
+    let bottom_h = if s.approval.is_some() { 8 } else { 3 };
     let [chat, bottom] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(bottom_h)]).areas(f.area());
 
@@ -103,12 +103,18 @@ fn ui(f: &mut Frame, s: &State) {
         chat,
     );
 
-    if let Some((what, _)) = &s.approval {
+    if let Some((what, _, scope)) = &s.approval {
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(what.clone()),
                 Line::from(""),
-                Line::from("[y] approve   [a] approve for session   [n] reject"),
+                Line::from(match scope {
+                    Some(Verdict::SaveRule) => {
+                        "[y] approve once   [a] allow similar commands   [n] reject"
+                    }
+                    Some(_) => "[y] approve once   [a] allow this conversation   [n] reject",
+                    None => "[y] approve once   [n] reject",
+                }),
             ])
             .wrap(Wrap { trim: false })
             .block(
@@ -202,14 +208,20 @@ pub async fn run(
                 }
                 Event::ReasoningStart { .. } | Event::ReasoningDelta { .. } => {}
                 Event::AssistantMessage(value)=>{match display.message(&value){Some(crate::stream_display::Update::Append(text))=>s.assistant(text),Some(crate::stream_display::Update::Replace(text))=>{s.push(Kind::Info,"Final answer updated");s.push(Kind::Assistant,text);},None=>{}}}
-                Event::Usage { .. } | Event::GoalState(_) | Event::TaskReport(_) | Event::WebSearch(_) => {}
+                Event::Usage { .. } | Event::GoalState(_) | Event::TaskReport(_) | Event::WebSearch(_) | Event::ApprovalReview(_) => {}
                 Event::ToolStart { name, args, .. } => s.push(Kind::Tool, format!("{name} {args}")),
+                Event::ToolExecuting { .. }=>{},
                 Event::ToolEnd { output, .. } => {
                     let short: String = output.lines().take(12).collect::<Vec<_>>().join("\n");
                     s.push(Kind::Output, short);
                 }
-                Event::Approval { what, reply, .. } => s.approval = Some((what, reply)),
+                Event::Approval { mut what, reply, allow_session, proposed_rule, .. } => {
+                    let scope=if let Some(prefix)=proposed_rule {what.push_str(&format!("\nReusable prefix: {}",crate::tools::command_text(&prefix)));Some(Verdict::SaveRule)}else if allow_session{Some(Verdict::Always)}else{None};
+                    s.approval=Some((what,reply,scope));
+                },
+                Event::Warning(message)=>s.push(Kind::Info,message),
                 Event::Done => { display.clear();s.busy = false; s.assist_open = false; }
+                Event::TurnCancelled => {display.clear();s.busy=false;s.assist_open=false;}
                 Event::Error(e) => { display.clear();s.push(Kind::Error, e); s.busy = false; }
             },
             Some(Ok(ev)) = keys.next() => {
@@ -219,11 +231,11 @@ pub async fn run(
                 if s.approval.is_some() {
                     let yes = match k.code {
                         KeyCode::Char('y') | KeyCode::Enter => Some(Verdict::Yes),
-                        KeyCode::Char('a') => Some(Verdict::Always),
+                        KeyCode::Char('a') => s.approval.as_ref().and_then(|entry|entry.2),
                         KeyCode::Char('n') | KeyCode::Esc => Some(Verdict::No),
                         _ => None,
                     };
-                    if let (Some(v), Some((_, reply))) = (yes, s.approval.take_if(|_| yes.is_some())) { let _ = reply.send(v); }
+                    if let (Some(v), Some((_, reply, _))) = (yes, s.approval.take_if(|_| yes.is_some())) { let _ = reply.send(v); }
                     continue;
                 }
                 match k.code {

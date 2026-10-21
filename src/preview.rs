@@ -28,6 +28,8 @@ struct Request {
     host: String,
     origin: Option<String>,
     fetch_site: Option<String>,
+    fetch_mode: Option<String>,
+    fetch_dest: Option<String>,
     content_type: Option<String>,
     content_length: usize,
     body: Vec<u8>,
@@ -252,6 +254,8 @@ fn parse_head(bytes: &[u8]) -> std::result::Result<Request, HttpError> {
         host: String::new(),
         origin: None,
         fetch_site: None,
+        fetch_mode: None,
+        fetch_dest: None,
         content_type: None,
         content_length: 0,
         body: Vec::new(),
@@ -277,6 +281,8 @@ fn parse_head(bytes: &[u8]) -> std::result::Result<Request, HttpError> {
             }
             "origin" => set_once(&mut request.origin, value)?,
             "sec-fetch-site" => set_once(&mut request.fetch_site, value)?,
+            "sec-fetch-mode" => set_once(&mut request.fetch_mode, value)?,
+            "sec-fetch-dest" => set_once(&mut request.fetch_dest, value)?,
             "content-type" => set_once(&mut request.content_type, value)?,
             "content-length" => {
                 if length.is_some()
@@ -329,12 +335,16 @@ fn validate_origin(request: &Request, port: u16) -> std::result::Result<(), Http
             "Host must match the loopback preview address",
         ));
     }
-    if request
-        .fetch_site
-        .as_deref()
-        .is_some_and(|site| !matches!(site, "same-origin" | "none"))
-    {
-        return Err(HttpError(403, "Cross-origin requests are not allowed"));
+    // A browser extension or external link can open the UI as a cross-site
+    // navigation. Only the root document gets this exception, never RPC or SSE.
+    let top_level_document = request.method == "GET"
+        && request.path == "/"
+        && request.fetch_mode.as_deref() == Some("navigate")
+        && request.fetch_dest.as_deref() == Some("document");
+    match request.fetch_site.as_deref() {
+        None | Some("same-origin" | "none") => {}
+        Some("same-site" | "cross-site") if top_level_document => {}
+        _ => return Err(HttpError(403, "Cross-origin requests are not allowed")),
     }
     match &request.origin {
         Some(origin) if origin.eq_ignore_ascii_case(&format!("http://{}", request.host)) => Ok(()),
@@ -483,6 +493,82 @@ mod tests {
     }
 
     #[test]
+    fn external_links_can_open_only_the_root_document() {
+        for host in ["127.0.0.1:8999", "localhost:8999"] {
+            for site in ["cross-site", "same-site"] {
+                for origin in [String::new(), format!("Origin: http://{host}\r\n")] {
+                    let request = parse_head(
+                        format!(
+                            "GET / HTTP/1.1\r\nHost: {host}\r\n{origin}Sec-Fetch-Site: {site}\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+                    assert!(validate_origin(&request, 8999).is_ok());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn document_navigation_never_bypasses_host_or_origin_checks() {
+        for (host, origin) in [
+            ("evil.example:8999", ""),
+            ("127.0.0.1:8998", ""),
+            ("127.0.0.1:8999", "http://evil.example"),
+            ("127.0.0.1:8999", "http://localhost:8999"),
+            ("127.0.0.1:8999", "http://127.0.0.1:8998"),
+            ("127.0.0.1:8999", "null"),
+        ] {
+            let request = parse_head(
+                format!(
+                    "GET / HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nSec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(validate_origin(&request, 8999).unwrap_err().0, 403);
+        }
+    }
+
+    #[test]
+    fn cross_site_fetches_embeds_and_backend_routes_remain_forbidden() {
+        for site in ["cross-site", "same-site"] {
+            for metadata in [
+                "",
+                "Sec-Fetch-Mode: navigate\r\n",
+                "Sec-Fetch-Dest: document\r\n",
+                "Sec-Fetch-Mode: cors\r\nSec-Fetch-Dest: empty\r\n",
+                "Sec-Fetch-Mode: no-cors\r\nSec-Fetch-Dest: empty\r\n",
+                "Sec-Fetch-Mode: cors\r\nSec-Fetch-Dest: document\r\n",
+                "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: iframe\r\n",
+                "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: frame\r\n",
+                "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: object\r\n",
+                "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: embed\r\n",
+            ] {
+                let request = parse_head(
+                    format!(
+                        "GET / HTTP/1.1\r\nHost: 127.0.0.1:8999\r\nSec-Fetch-Site: {site}\r\n{metadata}\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+                assert_eq!(validate_origin(&request, 8999).unwrap_err().0, 403);
+            }
+            for (method, path) in [("GET", "/events"), ("POST", "/rpc"), ("POST", "/")] {
+                let request = parse_head(
+                    format!(
+                        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:8999\r\nOrigin: http://127.0.0.1:8999\r\nSec-Fetch-Site: {site}\r\nSec-Fetch-Mode: navigate\r\nSec-Fetch-Dest: document\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+                assert_eq!(validate_origin(&request, 8999).unwrap_err().0, 403);
+            }
+        }
+    }
+
+    #[test]
     fn ambiguous_framing_and_duplicate_security_headers_are_rejected() {
         for extra in [
             "Content-Length: 1\r\nContent-Length: 1\r\n",
@@ -490,6 +576,9 @@ mod tests {
             "Transfer-Encoding: chunked\r\n",
             "Host: localhost:8999\r\n",
             "Origin: http://127.0.0.1:8999\r\nOrigin: http://evil.example\r\n",
+            "Sec-Fetch-Site: cross-site\r\nSec-Fetch-Site: same-origin\r\n",
+            "Sec-Fetch-Mode: navigate\r\nSec-Fetch-Mode: cors\r\n",
+            "Sec-Fetch-Dest: document\r\nSec-Fetch-Dest: iframe\r\n",
             " Host: evil.example\r\n",
         ] {
             assert!(parse_head(
@@ -543,6 +632,48 @@ mod tests {
             .unwrap();
         writer.shutdown().await.unwrap();
         assert_eq!(read_request(&mut reader).await.unwrap_err().0, 400);
+    }
+
+    #[tokio::test]
+    async fn transport_allows_external_document_navigation_but_rejects_fetch_and_embed() {
+        for (method, path, mode, destination, status) in [
+            ("GET", "/", "navigate", "document", 200),
+            ("GET", "/", "cors", "empty", 403),
+            ("GET", "/", "no-cors", "empty", 403),
+            ("GET", "/", "navigate", "iframe", 403),
+            ("GET", "/", "navigate", "object", 403),
+            ("GET", "/events", "cors", "empty", 403),
+            ("GET", "/events", "navigate", "document", 403),
+            ("POST", "/rpc", "navigate", "document", 403),
+        ] {
+            let (mut client, stream) = tokio::io::duplex(4096);
+            let (rpc, mut received) = mpsc::unbounded_channel();
+            let (events, _) = broadcast::channel(EVENT_CAPACITY);
+            let server = tokio::spawn(async move {
+                handle_connection(stream, 8999, rpc, events).await.unwrap();
+            });
+            client
+                .write_all(
+                    format!(
+                        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:8999\r\nSec-Fetch-Site: cross-site\r\nSec-Fetch-Mode: {mode}\r\nSec-Fetch-Dest: {destination}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut response = String::new();
+            timeout(Duration::from_secs(1), client.read_to_string(&mut response))
+                .await
+                .unwrap()
+                .unwrap();
+            server.await.unwrap();
+            assert!(response.starts_with(&format!("HTTP/1.1 {status} ")));
+            if status == 200 {
+                assert!(response.contains("Content-Type: text/html; charset=utf-8\r\n"));
+                assert!(response.contains("Content-Security-Policy: frame-ancestors 'none'\r\n"));
+            }
+            assert!(received.try_recv().is_err());
+        }
     }
 
     #[tokio::test]

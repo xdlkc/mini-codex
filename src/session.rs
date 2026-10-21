@@ -4,10 +4,11 @@
 use crate::config::home;
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+#[derive(Clone)]
 pub struct Session {
     pub id: String,
     path: PathBuf,
@@ -109,6 +110,17 @@ fn read_metadata(store: &Path, id: &str) -> Value {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| json!({}))
+}
+
+pub(crate) fn is_archived_at(store: &Path, id: &str) -> std::result::Result<bool, String> {
+    let bytes = match std::fs::read(metadata_path(store, id)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Read session metadata: {error}")),
+    };
+    let metadata: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Read session metadata: {error}"))?;
+    Ok(metadata["archived"] == true)
 }
 
 static METADATA_LOCK: Mutex<()> = Mutex::new(());
@@ -214,8 +226,12 @@ fn prepare_ui_turn(turn: &Value) -> Result<Value> {
         .as_object()
         .context("UI turn snapshot must be an object")?;
     anyhow::ensure!(
-        matches!(turn["status"].as_str(), Some("failed" | "interrupted")),
-        "UI snapshots require a failed or interrupted terminal turn"
+        matches!(turn["status"].as_str(), Some("failed" | "interrupted"))
+            || turn["status"] == "completed"
+                && turn["items"].as_array().is_some_and(|items| items
+                    .iter()
+                    .any(|item| item["approvalReview"].is_object())),
+        "UI snapshots require an interrupted/failed turn or a completed approval review"
     );
     anyhow::ensure!(
         turn["id"].as_str().is_some_and(|s| !s.trim().is_empty()
@@ -301,8 +317,11 @@ fn prepare_ui_turn(turn: &Value) -> Result<Value> {
 }
 
 fn parse_session_file(path: &Path) -> Option<(String, Value, Vec<Value>, SessionInfo)> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let updated_ms = path
+    let mut file = std::fs::File::open(path).ok()?;
+    file.lock_shared().ok()?;
+    let mut text = String::new();
+    file.read_to_string(&mut text).ok()?;
+    let updated_ms = file
         .metadata()
         .ok()?
         .modified()
@@ -662,11 +681,17 @@ impl Session {
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error).context("creating session"),
             };
-            writeln!(
+            let written = writeln!(
                 file,
                 "{}",
                 json!({"meta": {"id": id, "cwd": cwd, "model": model, "created_ms": ms as u64}})
-            )?;
+            )
+            .and_then(|_| file.sync_all());
+            if let Err(error) = written {
+                drop(file);
+                let _ = std::fs::remove_file(&path);
+                return Err(error).context("saving session header");
+            }
             return Ok(Self {
                 id,
                 path,
@@ -825,19 +850,23 @@ impl Session {
 }
 
 pub fn list() -> Vec<SessionInfo> {
-    list_filtered(false)
+    list_filtered(Some(false))
 }
 
 pub fn list_archived() -> Vec<SessionInfo> {
-    list_filtered(true)
+    list_filtered(Some(true))
 }
 
-fn list_filtered(archived: bool) -> Vec<SessionInfo> {
+pub(crate) fn list_all() -> Vec<SessionInfo> {
+    list_filtered(None)
+}
+
+fn list_filtered(archived: Option<bool>) -> Vec<SessionInfo> {
     let store = home();
     let mut sessions: Vec<SessionInfo> = all_session_files()
         .into_iter()
         .filter_map(|file| load_session_file(&file, &store).map(|(_, _, _, info)| info))
-        .filter(|info| info.archived == archived)
+        .filter(|info| archived.is_none_or(|archived| info.archived == archived))
         .collect();
     sessions.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms));
     sessions

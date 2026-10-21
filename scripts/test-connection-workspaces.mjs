@@ -78,6 +78,21 @@ test('archive requires an explicit ignored-file choice and never silently sends 
   }
 });
 
+test('worktrees start clean by default and local code changes require an explicit choice',async()=>{
+  for(const includeLocalChanges of [false,true]){
+    const h=harness(()=>({worktree:{path:'/copied',cwd:'/copied'}}));
+    await h.context.createWorktreeDialog('/source');
+    const choice=h.node('worktree-include-local-changes');assert.equal(choice.checked,false);
+    assert.match(h.node('worktree-local-state-note').textContent,/clean files/);
+    choice.checked=includeLocalChanges;choice.onchange();
+    if(includeLocalChanges)assert.match(h.node('worktree-local-state-note').textContent,/current HEAD.*Ignored files/);
+    await h.elements.find(element=>element.textContent==='Create worktree').onclick();
+    const params=plain(h.calls.find(call=>call.method==='workspace/worktree/create').params);
+    assert.equal(params.includeLocalChanges,includeLocalChanges?true:undefined);
+    assert.equal(params.cwd,'/source');assert.equal(params.baseRef,'HEAD');
+  }
+});
+
 test('opening a worktree waits for the active document save and respects navigation during that save',async()=>{
   const saving=deferred(),h=harness();h.context.flushDocument=()=>saving.promise;
   const opening=h.context.useWorkspace({path:'/managed/A',cwd:'/managed/A',name:'A'});

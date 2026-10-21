@@ -27,6 +27,47 @@ pub struct Catalog {
     cache: Mutex<Option<Cache>>,
 }
 
+pub struct ReviewModel {
+    pub model: String,
+    pub effort: String,
+}
+
+fn select_review_model(
+    parent: &str,
+    effort: &str,
+    preferred: &str,
+    available: &[Value],
+) -> ReviewModel {
+    let parent_info = available.iter().find(|row| row["model"] == parent);
+    let override_id = parent_info.and_then(|row| row["autoReviewModelOverride"].as_str());
+    let selected = override_id.unwrap_or(preferred);
+    let preset = available.iter().find(|row| row["model"] == selected);
+    let metadata = preset.or(parent_info);
+    let supports_low = metadata.is_some_and(|row| {
+        row["supportedReasoningEfforts"]
+            .as_array()
+            .is_some_and(|levels| levels.iter().any(|level| level["reasoningEffort"] == "low"))
+    });
+    let fallback_effort = if let Some(preset) = preset {
+        preset["defaultReasoningEffort"].as_str().unwrap_or("auto")
+    } else if effort != "auto" {
+        effort
+    } else {
+        parent_info
+            .and_then(|row| row["defaultReasoningEffort"].as_str())
+            .unwrap_or("auto")
+    };
+    ReviewModel {
+        model: if preset.is_some() {
+            selected
+        } else {
+            override_id.unwrap_or(parent)
+        }
+        .into(),
+        effort: if supports_low { "low" } else { fallback_effort }.into(),
+    }
+}
+
 fn text(v: &Value, max: usize) -> Option<&str> {
     v.as_str()
         .filter(|s| !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control))
@@ -109,6 +150,7 @@ fn parse_catalog(value: &Value, chatgpt: bool) -> Result<Vec<Value>, String> {
             "defaultReasoningEffort":default.unwrap_or("auto"),"supportedReasoningEfforts":efforts,
             "reasoningMetadataKnown":chatgpt&&row["supported_reasoning_levels"].is_array(),
             "responsesSupport":if chatgpt{"supported"}else{"unknown"},"inputModalities":if chatgpt{row["input_modalities"].clone()}else{Value::Null},
+            "autoReviewModelOverride":if chatgpt{text(&row["auto_review_model_override"],255)}else{None},
             "defaultServiceTier":row["default_service_tier"],"serviceTiers":tiers,"contextWindow":if chatgpt{row["context_window"].as_u64()}else{None},"supportedServiceTiers":tiers,
             "shutdownDate":if chatgpt{Value::Null}else{row["shutdown_date"].clone()}}));
     }
@@ -236,6 +278,33 @@ pub fn normalize_tier(tier: &str) -> Option<String> {
 }
 
 impl Catalog {
+    /// Selection uses the same offline catalog as the parent. A hidden reviewer
+    /// remains available here without being promoted into the model picker.
+    pub async fn review_model(&self, parent: &str, effort: &str) -> ReviewModel {
+        let Ok(snapshot) = Store::configured().snapshot() else {
+            return select_review_model(parent, effort, "codex-auto-review", &[]);
+        };
+        let auth = snapshot.auth;
+        let base = auth.base_url();
+        let cache = self.cache.lock().await;
+        let available = cache
+            .as_ref()
+            .filter(|cache| cache.identity == identity(&auth, &base))
+            .map(|cache| cache.models.clone())
+            .unwrap_or_else(|| {
+                if codex_provider(&base) {
+                    codex_fallback().0
+                } else {
+                    vec![]
+                }
+            });
+        let preferred = if matches!(auth, Auth::ApiKey(_)) {
+            "gpt-5.6-luna"
+        } else {
+            "codex-auto-review"
+        };
+        select_review_model(parent, effort, preferred, &available)
+    }
     pub async fn metadata(&self, model: &str) -> Option<Value> {
         let auth = Store::configured().snapshot().ok()?.auth;
         let base = auth.base_url();
@@ -269,7 +338,11 @@ impl Catalog {
         if p.get("refresh").is_some_and(|v| !v.is_boolean()) {
             return Err("refresh must be boolean".into());
         }
-        if p.get("includeHidden").is_some_and(|value|!value.is_boolean()){return Err("includeHidden must be boolean".into());}
+        if p.get("includeHidden")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err("includeHidden must be boolean".into());
+        }
         let auth = Store::configured()
             .snapshot()
             .map_err(|_| "Cannot read account connection")?
@@ -288,7 +361,14 @@ impl Catalog {
         )
         .await
         .map_err(|_| "The model catalog is busy. Try refreshing again.".to_string())?
-        .map(|mut result|{if p["includeHidden"]!=true{if let Some(items)=result["data"].as_array_mut(){items.retain(|item|item["hidden"]!=true);}}result})
+        .map(|mut result| {
+            if p["includeHidden"] != true {
+                if let Some(items) = result["data"].as_array_mut() {
+                    items.retain(|item| item["hidden"] != true);
+                }
+            }
+            result
+        })
     }
     async fn list_with(
         &self,
@@ -433,6 +513,49 @@ impl Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn review_selection_uses_catalog_override_hidden_models_and_supported_effort() {
+        let mut catalog = parse_catalog(&json!({"models":[
+            {"slug":"parent","visibility":"list","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"}]},
+            {"slug":"reviewer","visibility":"hide","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"low"}]}
+        ]}),true).unwrap();
+        let selected = select_review_model("parent", "high", "reviewer", &catalog);
+        assert_eq!(
+            (selected.model.as_str(), selected.effort.as_str()),
+            ("reviewer", "low")
+        );
+        assert!(catalog[1]["hidden"] == true);
+        catalog[1]["supportedReasoningEfforts"] = json!([{"reasoningEffort":"medium"}]);
+        assert_eq!(
+            select_review_model("parent", "high", "reviewer", &catalog).effort,
+            "medium"
+        );
+        catalog[0]["autoReviewModelOverride"] = json!("custom-reviewer");
+        let selected = select_review_model("parent", "high", "reviewer", &catalog);
+        assert_eq!(
+            (selected.model.as_str(), selected.effort.as_str()),
+            ("custom-reviewer", "high")
+        );
+        catalog[0]["supportedReasoningEfforts"] = json!([{"reasoningEffort":"low"}]);
+        assert_eq!(
+            select_review_model("parent", "max", "reviewer", &catalog).effort,
+            "low"
+        );
+    }
+    #[test]
+    fn review_fallback_keeps_custom_provider_and_does_not_invent_low_effort() {
+        let selected = select_review_model("custom", "auto", "gpt-5.6-luna", &[]);
+        assert_eq!(
+            (selected.model.as_str(), selected.effort.as_str()),
+            ("custom", "auto")
+        );
+        let catalog=parse_catalog(&json!({"models":[{"slug":"parent","visibility":"list","auto_review_model_override":"special","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"}]}]}),true).unwrap();
+        let selected = select_review_model("parent", "auto", "reviewer", &catalog);
+        assert_eq!(
+            (selected.model.as_str(), selected.effort.as_str()),
+            ("special", "medium")
+        );
+    }
     #[test]
     fn basic_catalog_does_not_invent_reasoning_or_responses_support() {
         let data = parse_catalog(

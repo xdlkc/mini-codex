@@ -1,0 +1,44 @@
+#codex-environment-actions{display:flex;align-items:center;gap:6px;min-width:0}
+#codex-environment-actions .pill-badge{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;flex-shrink:0}
+#codex-environment-actions .pill-badge svg{width:16px;height:16px;flex:none}
+body:not(.codex-chrome) #codex-environment-actions{display:none}
+#codex-environment-status{margin:8px 24px;max-width:736px;padding:12px 14px;border:1px solid var(--border-subtle);border-radius:12px;background:var(--bg-subtle);font-size:13px;align-self:center;width:calc(100% - 48px)}
+#codex-environment-status[hidden]{display:none}
+body:is(.in-settings,.in-scheduled) #codex-environment-status{display:none}
+.codex-env-run-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#codex-environment-status details{margin-top:8px;color:var(--text-secondary)}
+#codex-environment-status pre,.codex-env-card pre{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--font-mono);margin:8px 0}
+.codex-env-card{display:flex;flex-direction:column;gap:8px;padding:18px}
+.codex-env-card small{color:var(--text-tertiary);overflow-wrap:anywhere}
+.codex-env-editor{display:flex;flex-direction:column;gap:20px;max-width:720px;padding:8px 0 28px}
+.codex-env-field{display:flex;flex-direction:column;gap:7px;font-size:14px}
+.codex-env-editor .modal-input{width:100%;box-sizing:border-box}
+.codex-env-editor textarea{font-family:var(--font-mono);line-height:1.5;resize:vertical}
+.codex-env-script{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+.codex-env-script h3,.codex-env-editor h3{font-size:14px;font-weight:550;margin:0}
+.codex-env-script textarea{grid-column:1/-1}
+.codex-env-editor details{font-size:13px;color:var(--text-secondary)}
+.codex-env-editor details[open]>.codex-env-script{margin-top:16px}
+.codex-env-editor code{display:block;overflow-wrap:anywhere;margin-top:10px}
+.codex-env-action-row{padding:14px;border:1px solid var(--border-subtle);border-radius:12px;display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.codex-env-action-label{font-size:12px;font-weight:500;text-transform:uppercase;color:var(--text-secondary);letter-spacing:.02em}
+.codex-env-action-name{display:flex;align-items:center;gap:8px}
+.codex-env-action-name>input{font-family:inherit;min-width:0;flex:1}
+.codex-env-action-icon{width:36px;height:36px;padding:7px;flex:none}
+.codex-env-action-icon svg{width:20px;height:20px}
+.codex-env-action-error{font-size:12px;margin:0}
+.codex-env-editor-footer{display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:760px){.codex-env-run-heading{align-items:flex-start;flex-direction:column}#codex-environment-status{margin:8px 12px;width:calc(100% - 24px)}#codex-environment-actions .pill-badge{max-width:100px;overflow:hidden;text-overflow:ellipsis}.codex-env-script{grid-template-columns:1fr}.codex-env-script textarea{grid-column:1}.codex-env-editor-footer{flex-wrap:wrap}}
+
+.codex-env-archive-output pre,#codex-environment-terminal pre{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--font-mono)}
+#codex-environment-terminal{padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--border-subtle)}
+#codex-environment-terminal>span{margin-left:8px;color:var(--text-tertiary);font-size:12px}
+
+.codex-env-field>input{font-family:inherit}
+.codex-env-project-list{display:flex;flex-direction:column;gap:12px}
+.codex-env-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;background:none;border:0;border-radius:8px;color:var(--text-primary);padding:10px 8px;width:100%;font:inherit;cursor:pointer}
+.codex-env-entry:hover{background:var(--bg-hover)}
+.codex-env-entry small{font-size:12px}
+.codex-env-card h2{font-size:14px;font-weight:550;margin:0}
+.codex-env-card>.settings-select{align-self:flex-start}
+.codex-env-card details{font-size:13px;color:var(--text-secondary)}

@@ -90,6 +90,8 @@ impl Server {
             .filter(|id| !id.is_empty() && id.len() <= 128)
             .ok_or_else(|| (-32602, "Voice id is required".into()))?
             .to_owned();
+        let workspace = self.workspace_gate.lock().await;
+        let _access = thread_lifecycle::access(&thread_id).map_err(|e| (-32000, e))?;
         let thread = self
             .threads
             .lock()
@@ -103,7 +105,6 @@ impl Server {
                 )
             })?;
         {
-            let _workspace = self.workspace_gate.lock().await;
             let _start = thread.start_lock.lock().await;
             if thread.is_active() || !thread.queued_inputs.lock().unwrap().is_empty() {
                 return Err((
@@ -118,6 +119,10 @@ impl Server {
                 return Err((-32000, "Pause the active goal before starting voice".into()));
             }
             let agent = thread.agent.lock().await;
+            let execution = thread_lifecycle::execution(&thread_id).map_err(|e| (-32000, e))?;
+            let checkout_execution = workspaces::execution_lease(&thread.cwd)
+                .await
+                .map_err(|e| (-32000, e))?;
             if agent.session.is_read_only() {
                 return Err((
                     -32000,
@@ -178,10 +183,13 @@ impl Server {
                     saved: Default::default(),
                     ended: Default::default(),
                     created_ms: now_ms(),
+                    execution: Mutex::new(Some(execution)),
+                    checkout_execution: Mutex::new(checkout_execution),
                 }),
             );
             *thread.voice_call.lock().unwrap() = Some(id.clone());
         }
+        drop(workspace);
         self.notify(
             "voice/status",
             json!({"id":id,"threadId":thread_id,"status":"connecting"}),
@@ -219,6 +227,7 @@ impl Server {
             .get(id)
             .cloned()
             .ok_or_else(|| (-32602, "Unknown voice conversation".into()))?;
+        let _access = thread_lifecycle::access(&binding.thread_id).map_err(|e| (-32000, e))?;
         let thread = self
             .threads
             .lock()
@@ -251,7 +260,7 @@ impl Server {
             .session
             .append_batch_checked(&records)
             .map_err(|e| (-32000, format!("Could not save the voice transcript: {e}")))?;
-        agent.history.extend(crate::agent::model_history(records));
+        agent.history.extend(records);
         *saved = messages.clone();
         self.notify(
             "voice/transcript/saved",
@@ -264,6 +273,8 @@ impl Server {
         let binding = self.voice_bindings.lock().unwrap().get(id).cloned();
         if let Some(binding) = binding {
             binding.ended.store(true, Ordering::SeqCst);
+            binding.execution.lock().unwrap().take();
+            binding.checkout_execution.lock().unwrap().take();
             if let Some(thread) = self
                 .threads
                 .lock()

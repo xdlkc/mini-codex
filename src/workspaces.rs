@@ -12,6 +12,16 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[path = "workspace_archive.rs"]
+mod archive;
+#[path = "workspace_fork_copy.rs"]
+mod fork_copy;
+#[path = "workspace_handoff.rs"]
+mod handoff;
+pub use archive::archive_with_environment;
+use archive::PreparedArchive;
+pub use handoff::{handoff_warnings, prepare_handoff};
+
 type Result<T> = std::result::Result<T, String>;
 static LOCK: Mutex<()> = Mutex::new(());
 const MAX_OUTPUT: usize = 64 * 1024 * 1024;
@@ -26,6 +36,9 @@ const METHODS: &[&str] = &[
     "workspace/worktree/create",
     "workspace/worktree/archive",
     "workspace/worktree/restore",
+    "workspace/handoff/inspect",
+    "workspace/handoff/rollback",
+    "workspace/handoff/status",
 ];
 
 pub async fn handle(method: &str, params: &Value) -> Option<Result<Value>> {
@@ -40,6 +53,128 @@ pub async fn handle(method: &str, params: &Value) -> Option<Result<Value>> {
             .map_err(|e| format!("Git workspace worker failed: {e}"))
             .and_then(|result| result),
     )
+}
+
+pub async fn execution_lease(cwd: &str) -> Result<Option<File>> {
+    let cwd = PathBuf::from(cwd);
+    tokio::task::spawn_blocking(move || {
+        let cwd = cwd
+            .canonicalize()
+            .map_err(|e| format!("Resolve execution directory: {e}"))?;
+        Repo::open(&cwd)?
+            .map(|repo| {
+                crate::thread_lifecycle::checkout_at(&crate::config::home(), &repo.root, false)
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|e| format!("Checkout execution lease worker failed: {e}"))?
+}
+
+pub(crate) fn environment_context(cwd: &Path, file: &str) -> Result<(PathBuf, Option<PathBuf>)> {
+    let cwd = cwd.canonicalize().map_err(|e| e.to_string())?;
+    match Repo::open(&cwd)? {
+        Some(repo) => Ok((repo.root.clone(), Some(repo.admin_path(file)?))),
+        None => Ok((cwd, None)),
+    }
+}
+
+pub(crate) fn environment_selection(
+    cwd: &Path,
+    selected: Option<Option<&str>>,
+) -> Result<Option<String>> {
+    let repo = Repo::open(cwd)?.ok_or("A Git checkout is required to select an environment")?;
+    if let Some(value) = selected {
+        // Enabling worktreeConfig must not make a linked checkout inherit a
+        // primary checkout's explicit core.worktree/core.bare settings.
+        if repo
+            .text(&["config", "--local", "--get", "extensions.worktreeConfig"])
+            .ok()
+            .as_deref()
+            != Some("true")
+        {
+            for key in ["core.worktree", "core.bare"] {
+                if let Ok(value) = repo.text(&["config", "--local", "--get", key]) {
+                    if key == "core.worktree" || value == "true" {
+                        let config = repo.common.join("config.worktree");
+                        repo.bytes(&["config", "--file", path_text(&config)?, key, &value])?;
+                        repo.bytes(&["config", "--local", "--unset", key])?;
+                    }
+                }
+            }
+        }
+        repo.bytes(&["config", "extensions.worktreeConfig", "true"])?;
+        repo.bytes(&[
+            "config",
+            "--worktree",
+            "codex.localEnvironmentConfigPath",
+            value.unwrap_or("__none__"),
+        ])?;
+    }
+    // Older and externally created worktrees have no worktree-scoped config.
+    // Reading their selection must not enable extensions or prevent archive.
+    if repo
+        .text(&["config", "--local", "--get", "extensions.worktreeConfig"])
+        .as_deref()
+        != Ok("true")
+    {
+        return Ok(None);
+    }
+    let mut command = git_command(&repo.root, &repo.filters, None);
+    command.args([
+        "config",
+        "--worktree",
+        "--get",
+        "codex.localEnvironmentConfigPath",
+    ]);
+    let output = execute(command, None, MAX_OUTPUT)?.output;
+    if output.status.code() == Some(1) {
+        return Ok(None);
+    }
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    let value = String::from_utf8(output.stdout)
+        .map_err(|e| e.to_string())?
+        .trim()
+        .to_string();
+    Ok((!value.is_empty() && value != "__none__").then_some(value))
+}
+
+pub(crate) fn environment_tracking(cwd: &Path, path: &Path) -> Result<(bool, bool)> {
+    let repo = Repo::open(cwd)?.ok_or("A Git checkout is required")?;
+    let check = |args: &[&str]| -> Result<bool> {
+        let mut command = git_command(&repo.root, &repo.filters, None);
+        command.args(args).arg("--").arg(path);
+        let result = execute(command, None, MAX_OUTPUT)?.output;
+        if result.status.success() {
+            Ok(true)
+        } else if result.status.code() == Some(1) {
+            Ok(false)
+        } else {
+            Err(String::from_utf8_lossy(&result.stderr).into_owned())
+        }
+    };
+    Ok((
+        check(&["ls-files", "--error-unmatch"])?,
+        check(&["check-ignore", "--quiet"])?,
+    ))
+}
+
+pub(crate) async fn environment_lease(
+    cwd: &Path,
+    home: &Path,
+    exclusive: bool,
+) -> Result<Option<File>> {
+    let cwd = cwd.to_path_buf();
+    let home = home.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        Repo::open(&cwd)?
+            .map(|repo| crate::thread_lifecycle::checkout_at(&home, &repo.root, exclusive))
+            .transpose()
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Register a worktree that another trusted Rust component just created. This
@@ -57,6 +192,137 @@ pub async fn register_created_worktree(
     })
     .await
     .map_err(|error| format!("Register worktree worker failed: {error}"))?
+}
+
+/// A fork owns a newly created worktree until its rollout is saved. The private
+/// baseline prevents cleanup from deleting edits made after creation.
+pub struct ForkWorktree {
+    pub info: Value,
+    store: Store,
+    baseline: Option<fork_copy::Baseline>,
+}
+
+pub async fn create_fork_worktree(cwd: &str, name: &str) -> Result<ForkWorktree> {
+    let cwd = cwd.to_string();
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || {
+        let store = Store::configured();
+        store.locked(|state| {
+            let directory = selected_directory(&json!({"cwd":cwd}))?;
+            let source = fork_copy::repository(&Repo::open(&directory)?
+                .ok_or("A Git repository is required to fork in a new worktree")?);
+            let input = fork_copy::Plan::capture(&store, &source)?;
+            let created = store.create_with_includes(
+                &source,
+                &json!({"name":name,"baseRef":input.head,"detached":true}),
+                state,
+                false,
+            )?;
+            let info = created["worktree"].clone();
+            let initial = Repo::open(&PathBuf::from(required(&info,"path")?))?.and_then(|repo|fork_copy::Baseline::capture(&repo).ok());
+            let result = (|| {
+                let target = Repo::open(&PathBuf::from(required(&info, "path")?))?
+                    .ok_or("The new worktree disappeared")?;
+                crate::local_environments::prepare_worktree(&source.cwd, &target.root, None)?;
+                input.apply(&source, &target)?;
+                let target_cwd = PathBuf::from(required(&info, "cwd")?);
+                if !target_cwd.is_dir() || !target_cwd.canonicalize().is_ok_and(|cwd|cwd.starts_with(&target.root)) {
+                    return Err("The fork chat directory is unavailable after copying local files".into());
+                }
+                let baseline = fork_copy::Baseline::capture(&target).ok();
+                state["worktrees"][required(&info, "id")?]["includeLocalChanges"] = json!(true);
+                state["worktrees"][required(&info, "id")?]["dirtyStatus"] = git_status(&target)?;
+                store.save(state)?;
+                Ok(ForkWorktree {
+                    info: state["worktrees"][required(&info, "id")?].clone(),
+                    store: store.clone(),
+                    baseline,
+                })
+            })();
+            if let Err(error)=&result {
+                let current=Repo::open(&PathBuf::from(required(&info,"path")?))?.and_then(|repo|fork_copy::Baseline::capture(&repo).ok());
+                if initial.is_none()||current!=initial {
+                    let message=format!("{error}; fork preparation changed the new checkout; its files were retained at {}",required(&info,"path")?);
+                    state["worktrees"][required(&info,"id")?]["state"]=json!("error");state["worktrees"][required(&info,"id")?]["error"]=json!(message);store.save(state)?;return Err(message);
+                }
+                let cleanup = rollback_created_worktree(
+                    &source,
+                    &PathBuf::from(required(&info, "path")?),
+                    None,
+                    required(&info, "head")?,
+                );
+                if let Err(error) = cleanup {
+                    return Err(format!(
+                        "Fork preparation failed; its worktree was retained: {error}"
+                    ));
+                }
+                state["worktrees"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(required(&info, "id")?);
+                store.save(state)?;
+            }
+            result
+        })
+    })
+    .await
+    .map_err(|error| format!("Fork worktree worker failed: {error}"))?
+}
+
+impl ForkWorktree {
+    pub async fn commit(&self, thread_id: &str) -> Result<Value> {
+        let thread_id = thread_id.to_string();
+        let store = self.store.clone();
+        let info = self.info.clone();
+        tokio::task::spawn_blocking(move || {
+            store.locked(|state| {
+                let id = required(&info, "id")?;
+                let record = state["worktrees"]
+                    .get_mut(id)
+                    .ok_or("Fork worktree registration disappeared")?;
+                if record["path"] != info["path"] || record["state"] != "active" {
+                    return Err("Fork worktree registration changed".into());
+                }
+                record["ownerThreadId"] = json!(thread_id);
+                record["updatedAt"] = json!(now_ms());
+                let result = record.clone();
+                store.save(state)?;
+                Ok(result)
+            })
+        })
+        .await
+        .map_err(|error| format!("Fork worktree registration failed: {error}"))?
+    }
+
+    pub async fn rollback(self, expected_owner: Option<String>) -> Result<()> {
+        tokio::task::spawn_blocking(move || {
+            self.store.locked(|state| {
+                let id = required(&self.info, "id")?;
+                let source = Repo::open(&PathBuf::from(required(&self.info, "sourceCwd")?))?
+                    .ok_or("Source repository is unavailable; fork worktree was retained")?;
+                let record = self.store.owned(&source, &json!({"id":id}), state)?;
+                if !record["ownerThreadId"].is_null()
+                    && record["ownerThreadId"].as_str() != expected_owner.as_deref()
+                {
+                    return Err("The worktree has an owner; its files were retained".into());
+                }
+                let target = Repo::open(&PathBuf::from(required(&record, "cwd")?))?
+                    .ok_or("Fork worktree is unavailable; its registration was retained")?;
+                let current = fork_copy::Baseline::capture(&target)?;
+                if self.baseline.as_ref() != Some(&current) {
+                    return Err(format!(
+                        "The fork worktree changed after creation; its files were retained at {}",
+                        target.root.display()
+                    ));
+                }
+                rollback_created_worktree(&source, &target.root, None, required(&record, "head")?)?;
+                state["worktrees"].as_object_mut().unwrap().remove(id);
+                self.store.save(state)
+            })
+        })
+        .await
+        .map_err(|error| format!("Fork worktree rollback failed: {error}"))?
+    }
 }
 
 fn now_ms() -> u64 {
@@ -139,6 +405,79 @@ fn no_symlink(path: &Path) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("Inspect {}: {e}", path.display())),
     }
+}
+
+// Match the desktop's local worktree copies: ignored AGENTS.override.md files
+// and the intersection of ignored files with Git's .worktreeinclude patterns.
+fn copy_worktree_includes(source: &Repo, target: &Path) -> Result<()> {
+    let mut selected = nul_paths(source.bytes(&[
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "-z",
+        "--",
+        ":(glob)**/AGENTS.override.md",
+    ])?)?;
+    let include = source.root.join(".worktreeinclude");
+    if exists(&include) {
+        let ignored = ignored_paths(source)?;
+        no_symlink(&include)?;
+        if !fs::metadata(&include).map_err(|e| e.to_string())?.is_file() {
+            return Err(".worktreeinclude must be a regular file".into());
+        }
+        let patterns = nul_paths(source.bytes(&[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-from=.worktreeinclude",
+            "-z",
+        ])?)?;
+        selected.extend(patterns.into_iter().filter(|path| ignored.contains(path)));
+    }
+    for relative in selected {
+        valid_relative(&relative)?;
+        let input = source.root.join(&relative);
+        let metadata = match fs::symlink_metadata(&input) {
+            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => meta,
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        let destination = target.join(&relative);
+        if let Some(parent) = Path::new(&relative).parent() {
+            let mut input_parent = source.root.clone();
+            let mut output_parent = target.to_path_buf();
+            for component in parent.components() {
+                input_parent.push(component);
+                no_symlink(&input_parent)?;
+                output_parent.push(component);
+                no_symlink(&output_parent)?;
+                fs::create_dir_all(&output_parent).map_err(|e| e.to_string())?;
+            }
+        }
+        // Existing files take priority after checking their parent path.
+        if exists(&destination) {
+            continue;
+        }
+        let mut reader = File::open(&input).map_err(|e| e.to_string())?;
+        let mut writer = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        std::io::copy(&mut reader, &mut writer)
+            .map_err(|e| format!("Copy worktree file {relative}: {e}"))?;
+        writer
+            .set_permissions(metadata.permissions())
+            .map_err(|e| e.to_string())?;
+        writer.sync_all().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 fn private_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path).map_err(|e| format!("Create {}: {e}", path.display()))?;
@@ -922,6 +1261,14 @@ fn walk_directories(root: &Path) -> Result<Vec<Directory>> {
     Ok(directories)
 }
 fn raw_snapshot(repo: &Repo, id: &str, include_ignored: bool) -> Result<Manifest> {
+    raw_snapshot_with_index(repo, id, include_ignored, None)
+}
+fn raw_snapshot_with_index(
+    repo: &Repo,
+    id: &str,
+    include_ignored: bool,
+    index: Option<&Path>,
+) -> Result<Manifest> {
     repo.ensure_archivable()?;
     let directories = walk_directories(&repo.root)?;
     let ignored = ignored_paths(repo)?;
@@ -938,6 +1285,14 @@ fn raw_snapshot(repo: &Repo, id: &str, include_ignored: bool) -> Result<Manifest
     let mut entries = Vec::new();
     let mut regular = Vec::new();
     for path in paths {
+        // Never read a tracked child through a directory replaced by a symlink.
+        let mut parent = repo.root.clone();
+        if let Some(relative) = Path::new(&path).parent() {
+            for component in relative.components() {
+                parent.push(component);
+                no_symlink(&parent)?;
+            }
+        }
         let full = repo.root.join(&path);
         let meta = match fs::symlink_metadata(&full) {
             Ok(meta) => meta,
@@ -973,7 +1328,7 @@ fn raw_snapshot(repo: &Repo, id: &str, include_ignored: bool) -> Result<Manifest
                 permissions: permissions(&meta),
                 blob: String::new(),
             });
-        } else {
+        } else if !meta.is_dir() {
             return Err(format!("Cannot snapshot non-file path {path}"));
         }
     }
@@ -997,7 +1352,12 @@ fn raw_snapshot(repo: &Repo, id: &str, include_ignored: bool) -> Result<Manifest
     let head = repo
         .head()?
         .ok_or("Cannot archive a worktree with an unborn HEAD")?;
-    let index_tree = repo.text(&["write-tree"])?;
+    let index_tree = utf8(
+        checked(&repo.root, &repo.filters, &["write-tree"], None, index)?,
+        "Index tree",
+    )?
+    .trim()
+    .to_string();
     Ok(Manifest {
         version: 1,
         id: id.into(),
@@ -1124,6 +1484,113 @@ fn verify_snapshot_tree(repo: &Repo, commit: &str, manifest: &Manifest) -> Resul
     Ok(())
 }
 
+fn materialize_snapshot(checkout: &Repo, manifest: &Manifest) -> Result<()> {
+    checkout.bytes(&["read-tree", &manifest.index_tree])?;
+    for directory in &manifest.directories {
+        safe_directory(&checkout.root, &directory.path)?;
+    }
+    for entry in &manifest.entries {
+        if let Some(parent) = Path::new(&entry.path)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            safe_directory(&checkout.root, path_text(parent)?)?;
+        }
+        let target = checkout.root.join(&entry.path);
+        if exists(&target) {
+            return Err(format!(
+                "Recovery file already exists and was retained: {}",
+                target.display()
+            ));
+        }
+        if entry.mode == "120000" {
+            restore_symlink(
+                &checkout.bytes(&["cat-file", "blob", &entry.blob])?,
+                &target,
+            )?;
+        } else {
+            stream_blob(&checkout, &entry.blob, &target)?;
+            let meta = fs::symlink_metadata(&target)
+                .map_err(|e| format!("Restored file {}: {e}", entry.path))?;
+            if !meta.is_file()
+                || !target
+                    .canonicalize()
+                    .map_err(|e| e.to_string())?
+                    .starts_with(&checkout.root)
+            {
+                return Err("Restored file escaped the managed checkout".into());
+            }
+            apply_permissions(&target, entry.permissions)?;
+        }
+    }
+    let mut directories = manifest.directories.clone();
+    directories.sort_by_key(|directory| std::cmp::Reverse(directory.path.matches('/').count()));
+    for directory in directories {
+        apply_permissions(&checkout.root.join(directory.path), directory.permissions)?;
+    }
+    apply_permissions(&checkout.root, manifest.root_permissions)?;
+    Ok(())
+}
+
+// Only called for the fresh, randomly named destination owned by this operation.
+fn writable_created_directories(path: &Path) -> Result<()> {
+    no_symlink(path)?;
+    apply_permissions(path, 0o700)?;
+    for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let meta = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            writable_created_directories(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn rollback_created_worktree(
+    repo: &Repo,
+    path: &Path,
+    branch: Option<&str>,
+    head: &str,
+) -> Result<()> {
+    if exists(path) {
+        writable_created_directories(path)?;
+    }
+    if git_worktrees(repo)?.iter().any(|tree| tree.path == path) {
+        repo.bytes(&["worktree", "remove", "--force", "--", path_text(path)?])?;
+    } else if exists(path) {
+        fs::remove_dir_all(path).map_err(|e| format!("Remove failed worktree: {e}"))?;
+    }
+    if let Some(branch) = branch {
+        let reference = format!("refs/heads/{branch}");
+        if repo.resolve(&reference).ok().as_deref() == Some(head) {
+            if git_worktrees(repo)?
+                .iter()
+                .any(|tree| tree.branch.as_deref() == Some(branch))
+            {
+                return Err("The new branch was opened elsewhere during rollback".into());
+            }
+            repo.bytes(&["update-ref", "-d", &reference, head])?;
+        }
+    }
+    cleanup_empty_worktree_parent(path);
+    Ok(())
+}
+
+fn cleanup_empty_worktree_parent(path: &Path) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let Some(name) = parent.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    if name.starts_with("wt_")
+        && name.len() == 35
+        && name[3..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        let _ = fs::remove_dir(parent);
+    }
+}
+
 #[derive(Clone)]
 struct Store {
     home: PathBuf,
@@ -1214,6 +1681,28 @@ impl Store {
         private_dir(&path)?;
         path.canonicalize().map_err(|e| e.to_string())
     }
+    fn local_snapshot(&self, repo: &Repo, snapshot_id: &str) -> Result<Manifest> {
+        let temporary = fork_copy::Scratch::new(&self.home)?;
+        // write-tree can update the index cache. Use a private copy so the source
+        // index bytes, including staged/unstaged separation, remain untouched.
+        let capture = || -> Result<Manifest> {
+            let index = fork_copy::copy_index(repo, &temporary.0.join(id("capture")))?;
+            let snapshot = raw_snapshot_with_index(repo, snapshot_id, false, Some(&index))?;
+            let staged = repo.with_index(&["ls-files", "--stage", "-z"], &index)?;
+            let tree = repo.bytes(&["ls-tree", "-r", "-z", &snapshot.index_tree])?;
+            let count = |bytes: &[u8]| bytes.iter().filter(|byte| **byte == 0).count();
+            if count(&staged) != count(&tree) {
+                return Err("Cannot copy intent-to-add index entries; stage their contents or unstage them first".into());
+            }
+            Ok(snapshot)
+        };
+        let before = capture()?;
+        let after = capture()?;
+        if before != after {
+            return Err("Local files or the Git index changed while copying; retry when the workspace is idle".into());
+        }
+        Ok(after)
+    }
     fn rpc(&self, method: &str, params: &Value) -> Result<Value> {
         let cwd = selected_directory(params)?;
         let repo = match Repo::open(&cwd)? {
@@ -1226,7 +1715,30 @@ impl Store {
             None => return Err("The selected directory is not a Git working tree".into()),
         };
         match method {
-            "workspace/gitStatus" => git_status(&repo),
+            "workspace/gitStatus" => {
+                let mut status = git_status(&repo)?;
+                if let Ok(state) = self.load() {
+                    if let Some(record) = state["worktrees"]
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .map(|(_, record)| record)
+                        .find(|record| {
+                            record["path"].as_str() == repo.root.to_str()
+                                && record["commonDir"].as_str() == repo.common.to_str()
+                        })
+                    {
+                        if repo.cwd == repo.root {
+                            if let Some(source) = record["repoRoot"].as_str() {
+                                status["workspaceName"] = json!(Path::new(source)
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned()));
+                            }
+                        }
+                    }
+                }
+                Ok(status)
+            }
             "workspace/gitDiff" => {
                 let staged = match params.get("staged") {
                     Some(value) => Some(value.as_bool().ok_or("staged must be a boolean")?),
@@ -1259,6 +1771,27 @@ impl Store {
                 Ok(json!({"cwd":repo.cwd,"repoRoot":repo.root,"diff":diff,"truncated":truncated}))
             }
             "workspace/branch/list" => branch_list(&repo),
+            "workspace/handoff/inspect" => {
+                self.locked(|state| handoff::inspect(self, &repo, state))
+            }
+            "workspace/handoff/status" => self.locked(|state| {
+                let requested = required(params, "operationId")?;
+                let record = state["handoffs"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .find(|(id, record)| {
+                        record["commonDir"].as_str() == repo.common.to_str()
+                            && (*id == requested || record["requestId"] == requested)
+                    })
+                    .map(|(_, record)| handoff::public_record(record));
+                Ok(json!({"operation":record}))
+            }),
+            "workspace/handoff/rollback" => self.finish_handoff_checked(
+                required(params, "operationId")?,
+                None,
+                Some(&repo.common),
+            ),
             "workspace/branch/switch" | "workspace/branch/create" => {
                 repo.ensure_not_busy()?;
                 let branch = required(params, "branch")?;
@@ -1380,7 +1913,12 @@ impl Store {
             item["locked"] = json!(tree.locked);
             item["prunable"] = json!(tree.prunable);
             item["state"] = json!(if tree.path.is_dir() {
-                "active"
+                match stored.and_then(|record| record["state"].as_str()) {
+                    Some("archiving") => "archiving",
+                    Some("restoring") => "restoring",
+                    Some("creating") => "creating",
+                    _ => "active",
+                }
             } else {
                 "error"
             });
@@ -1425,23 +1963,31 @@ impl Store {
         )
     }
     fn create(&self, repo: &Repo, params: &Value, state: &mut Value) -> Result<Value> {
+        self.create_with_includes(repo, params, state, true)
+    }
+    fn create_with_includes(
+        &self,
+        repo: &Repo,
+        params: &Value,
+        state: &mut Value,
+        include_ignored_files: bool,
+    ) -> Result<Value> {
         let head = repo.resolve(optional_string(params, "baseRef")?.unwrap_or("HEAD"))?;
+        let include_local_changes = bool_param(params, "includeLocalChanges", false)?;
+        if include_local_changes && repo.head()?.as_deref() != Some(&head) {
+            return Err("With local code changes requires a branch or commit at the current HEAD; select HEAD or turn off local code changes".into());
+        }
         let relative = repo
             .cwd
             .strip_prefix(&repo.root)
             .map_err(|_| "Selected directory escaped repository")?;
-        if !relative.as_os_str().is_empty() {
+        if include_ignored_files && !relative.as_os_str().is_empty() {
             let target = format!("{head}:{}", path_text(relative)?);
             if repo.text(&["cat-file", "-t", &target])? != "tree" {
                 return Err("The selected subdirectory does not exist in baseRef; select the repository root".into());
             }
         }
         let id = id("wt");
-        let root = self.managed_root()?;
-        let path = root.join(&id);
-        if exists(&path) {
-            return Err("Worktree destination already exists".into());
-        }
         let name = optional_string(params, "name")?
             .filter(|name| !name.trim().is_empty())
             .unwrap_or("Worktree")
@@ -1465,56 +2011,123 @@ impl Store {
         } else {
             let value = optional_string(params, "branch")?.unwrap_or(&generated);
             branch_name(repo, value)?;
+            let mut command = git_command(&repo.root, &repo.filters, None);
+            command.args([
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{value}"),
+            ]);
+            let result = execute(command, None, MAX_OUTPUT)?.output;
+            if result.status.success() {
+                return Err(format!("The new branch already exists: {value}"));
+            }
+            if result.status.code() != Some(1) {
+                return Err(format!(
+                    "Inspect new branch: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ));
+            }
             Some(value.to_string())
         };
-        let cwd = path.join(relative);
-        let now = now_ms();
-        let record = json!({"id":id,"name":name,"repoRoot":repo.root,"commonDir":repo.common,"sourceCwd":repo.cwd,"path":path,"workspacePath":path,"ownershipPath":id,"cwd":cwd,"branch":branch,"head":head,"state":"creating","managed":true,"snapshot":null,"dirtyStatus":null,"error":null,"createdAt":now,"updatedAt":now});
-        state["worktrees"][&id] = record;
-        self.save(state)?;
-        let result = if let Some(branch) = branch.as_deref() {
-            repo.bytes(&[
-                "worktree",
-                "add",
-                "-b",
-                branch,
-                "--",
-                path_text(&path)?,
-                &head,
-            ])
-        } else {
-            repo.bytes(&[
-                "worktree",
-                "add",
-                "--detach",
-                "--",
-                path_text(&path)?,
-                &head,
-            ])
-        };
-        match result {
-            Ok(_) => {
-                state["worktrees"][&id]["state"] = json!("active");
-                let checkout = Repo::open(&path)?.ok_or("Created worktree is unavailable")?;
-                state["worktrees"][&id]["dirtyStatus"] = git_status(&checkout)?;
-                self.save(state)?;
-                Ok(json!({"worktree":state["worktrees"][&id]}))
+        let local = if include_local_changes {
+            let manifest = self.local_snapshot(repo, &id)?;
+            if manifest.head != head {
+                return Err("HEAD changed while copying local code changes; retry when the workspace is idle".into());
             }
+            Some(manifest)
+        } else {
+            None
+        };
+        let root = self.managed_root()?;
+        let folder = repo
+            .root
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("workspace"));
+        let ownership = PathBuf::from(&id).join(folder);
+        let path = root.join(&ownership);
+        if exists(&path) {
+            return Err("Worktree destination already exists".into());
+        }
+        let cwd = if relative.as_os_str().is_empty() {
+            path.clone()
+        } else {
+            path.join(relative)
+        };
+        let now = now_ms();
+        let record = json!({"id":id,"name":name,"repoRoot":repo.root,"commonDir":repo.common,"sourceCwd":repo.cwd,"path":path,"workspacePath":path,"ownershipPath":ownership,"cwd":cwd,"branch":branch,"head":head,"state":"creating","managed":true,"snapshot":null,"includeLocalChanges":include_local_changes,"dirtyStatus":null,"error":null,"createdAt":now,"updatedAt":now});
+        state["worktrees"][&id] = record;
+        let mut attempted = false;
+        let result = (|| -> Result<Value> {
+            self.save(state)?;
+            let mut args = vec!["worktree", "add"];
+            if let Some(branch) = branch.as_deref() {
+                args.extend(["-b", branch]);
+            } else {
+                args.push("--detach");
+            }
+            if local.is_some() {
+                args.push("--no-checkout");
+            }
+            args.extend(["--", path_text(&path)?, &head]);
+            attempted = true;
+            repo.bytes(&args)?;
+            let checkout = Repo::open(&path)?.ok_or("Created worktree is unavailable")?;
+            if let Some(manifest) = local.as_ref() {
+                materialize_snapshot(&checkout, manifest)?;
+                let copied = raw_snapshot(&checkout, &id, false)?;
+                if copied.entries != manifest.entries
+                    || copied.directories != manifest.directories
+                    || copied.index_tree != manifest.index_tree
+                    || copied.head != manifest.head
+                {
+                    return Err("The new worktree failed local code change verification".into());
+                }
+            }
+            if include_ignored_files {
+                copy_worktree_includes(repo, &path)?;
+            }
+            state["worktrees"][&id]["state"] = json!("active");
+            state["worktrees"][&id]["dirtyStatus"] = git_status(&checkout)?;
+            self.save(state)?;
+            Ok(json!({"worktree":state["worktrees"][&id]}))
+        })();
+        match result {
+            Ok(result) => Ok(result),
             Err(error) => {
-                state["worktrees"][&id]["state"] = json!("error");
-                state["worktrees"][&id]["error"] = json!(error);
-                self.save(state)?;
-                Err(format!(
-                    "{error}; recovery record retained for {}",
-                    path.display()
-                ))
+                let cleanup = if attempted {
+                    rollback_created_worktree(repo, &path, branch.as_deref(), &head)
+                } else {
+                    Ok(())
+                };
+                if let Err(cleanup) = cleanup {
+                    state["worktrees"][&id]["state"] = json!("error");
+                    state["worktrees"][&id]["error"] =
+                        json!(format!("{error}; rollback failed: {cleanup}"));
+                    let _ = self.save(state);
+                    return Err(format!(
+                        "{error}; rollback failed: {cleanup}; recovery record retained for {}",
+                        path.display()
+                    ));
+                }
+                state["worktrees"].as_object_mut().unwrap().remove(&id);
+                self.save(state).map_err(|cleanup| {
+                    format!("{error}; worktree rolled back but registry cleanup failed: {cleanup}")
+                })?;
+                Err(error)
             }
         }
     }
-    fn archive(&self, repo: &Repo, params: &Value, state: &mut Value) -> Result<Value> {
+    fn prepare_archive(
+        &self,
+        repo: &Repo,
+        params: &Value,
+        state: &mut Value,
+    ) -> Result<PreparedArchive> {
         let record = self.owned(repo, params, state)?;
         let id = required(&record, "id")?;
         let path = PathBuf::from(required(&record, "path")?);
+        let _execution = crate::thread_lifecycle::checkout_at(&self.home, &path, true)?;
         let trees = git_worktrees(repo)?;
         let tree = trees
             .iter()
@@ -1549,6 +2162,11 @@ impl Store {
         }
         let manifest = raw_snapshot(&checkout, id, include)?;
         let snapshot = create_snapshot(&checkout, &manifest, &self.home, tree.branch.clone())?;
+        state["worktrees"][id]["localEnvironmentConfigPath"] =
+            json!(environment_selection(&path, None)?);
+        state["worktrees"][id]["shellEnvironmentSnapshot"] = json!(
+            crate::local_environments::snapshot_shell_environment(&path, &self.home)?
+        );
         state["worktrees"][id]["snapshot"] = snapshot.clone();
         state["worktrees"][id]["dirtyStatus"] = git_status(&checkout)?;
         state["worktrees"][id]["state"] = json!("archiving");
@@ -1559,45 +2177,24 @@ impl Store {
                 snapshot["ref"]
             )
         })?;
-        // Re-hash before the destructive Git step, after the durable recovery refs.
-        let verification = raw_snapshot(&checkout, id, include);
-        let result = match verification {
-            Ok(current) if current == manifest => {
-                let current = git_worktrees(repo)?;
-                if current
-                    .iter()
-                    .find(|tree| tree.path == path)
-                    .is_none_or(|tree| tree.locked.is_some() || tree.main)
-                {
-                    Err("Worktree registration or lock changed while preparing archive".into())
-                } else {
-                    repo.bytes(&["worktree", "remove", "--force", "--", path_text(&path)?])
-                        .map(|_| ())
-                }
-            }
-            Ok(_) => Err(
-                "Worktree changed while its snapshot was being prepared; checkout was retained"
-                    .into(),
-            ),
-            Err(error) => Err(error),
-        };
-        match result {
-            Ok(()) => {
-                state["worktrees"][id]["state"] = json!("archived");
-                state["worktrees"][id]["error"] = Value::Null;
-                self.save(state)?;
-                Ok(json!({"worktree":state["worktrees"][id]}))
-            }
-            Err(error) => {
-                state["worktrees"][id]["state"] = json!("active");
-                state["worktrees"][id]["error"] = json!(error);
-                self.save(state)?;
-                Err(format!(
-                    "{error}; recovery snapshot retained at {}",
-                    snapshot["ref"]
-                ))
-            }
-        }
+        Ok(PreparedArchive {
+            store: self.clone(),
+            repo: repo.clone(),
+            checkout,
+            record: record.clone(),
+            id: id.to_string(),
+            path,
+            manifest,
+            snapshot,
+            include,
+            discard,
+            branch: tree.branch.clone(),
+            execution: _execution,
+        })
+    }
+    fn archive(&self, repo: &Repo, params: &Value, state: &mut Value) -> Result<Value> {
+        let prepared = self.prepare_archive(repo, params, state)?;
+        self.complete_archive(&prepared, None, None, state)
     }
     fn restore(&self, repo: &Repo, params: &Value, state: &mut Value) -> Result<Value> {
         let record = self.owned(repo, params, state)?;
@@ -1668,6 +2265,7 @@ impl Store {
         let head = repo.resolve(&manifest.head)?;
         state["worktrees"][id]["state"] = json!("restoring");
         self.save(state)?;
+        let mut _restore_execution = None;
         let result = (|| -> Result<()> {
             repo.bytes(&[
                 "worktree",
@@ -1679,51 +2277,19 @@ impl Store {
                 &head,
             ])?;
             let checkout = Repo::open(&path)?.ok_or("Restored checkout is unavailable")?;
-            checkout.bytes(&["read-tree", staged])?;
-            for directory in &manifest.directories {
-                safe_directory(&path, &directory.path)?;
-            }
-            for entry in &manifest.entries {
-                if let Some(parent) = Path::new(&entry.path)
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                {
-                    safe_directory(&path, path_text(parent)?)?;
-                }
-                let target = path.join(&entry.path);
-                if exists(&target) {
-                    return Err(format!(
-                        "Recovery file already exists and was retained: {}",
-                        target.display()
-                    ));
-                }
-                if entry.mode == "120000" {
-                    restore_symlink(
-                        &checkout.bytes(&["cat-file", "blob", &entry.blob])?,
-                        &target,
-                    )?;
-                } else {
-                    stream_blob(&checkout, &entry.blob, &target)?;
-                    let meta = fs::symlink_metadata(&target)
-                        .map_err(|e| format!("Restored file {}: {e}", entry.path))?;
-                    if !meta.is_file()
-                        || !target
-                            .canonicalize()
-                            .map_err(|e| e.to_string())?
-                            .starts_with(&path)
-                    {
-                        return Err("Restored file escaped the managed checkout".into());
-                    }
-                    apply_permissions(&target, entry.permissions)?;
-                }
-            }
-            let mut directories = manifest.directories.clone();
-            directories
-                .sort_by_key(|directory| std::cmp::Reverse(directory.path.matches('/').count()));
-            for directory in directories {
-                apply_permissions(&path.join(directory.path), directory.permissions)?;
-            }
-            apply_permissions(&path, manifest.root_permissions)?;
+            _restore_execution = Some(crate::thread_lifecycle::checkout_at(
+                &self.home, &path, true,
+            )?);
+            materialize_snapshot(&checkout, &manifest)?;
+            crate::local_environments::restore_shell_environment(
+                &path,
+                &self.home,
+                &record["shellEnvironmentSnapshot"],
+            )?;
+            let selected = record["localEnvironmentConfigPath"]
+                .as_str()
+                .filter(|value| Path::new(value).is_file());
+            let _ = environment_selection(&path, Some(selected));
             let restored = raw_snapshot(&checkout, id, manifest.include_ignored)?;
             if restored.entries != manifest.entries
                 || restored.directories != manifest.directories
@@ -1801,6 +2367,76 @@ fn safe_directory(root: &Path, relative: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fork_guard(fixture: &Fixture) -> ForkWorktree {
+        let info = fixture
+            .call(
+                "workspace/worktree/create",
+                json!({"detached":true,"includeLocalChanges":true}),
+            )
+            .unwrap()["worktree"]
+            .clone();
+        let repo = Repo::open(&PathBuf::from(info["cwd"].as_str().unwrap()))
+            .unwrap()
+            .unwrap();
+        let baseline = fork_copy::Baseline::capture(&repo).ok();
+        ForkWorktree {
+            info,
+            store: fixture.store.clone(),
+            baseline,
+        }
+    }
+    #[tokio::test]
+    async fn fork_cleanup_removes_only_unchanged_unowned_worktrees() {
+        let fixture = Fixture::new();
+        let guard = fork_guard(&fixture);
+        let path = PathBuf::from(guard.info["path"].as_str().unwrap());
+        guard.rollback(None).await.unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            fixture.call("workspace/worktree/list", json!({})).unwrap()["data"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let guard = fork_guard(&fixture);
+        let path = PathBuf::from(guard.info["path"].as_str().unwrap());
+        fs::write(path.join("tracked.txt"), b"new work after fork\n").unwrap();
+        assert!(guard
+            .rollback(None)
+            .await
+            .unwrap_err()
+            .contains("changed after creation"));
+        assert_eq!(
+            fs::read(path.join("tracked.txt")).unwrap(),
+            b"new work after fork\n"
+        );
+        assert_eq!(
+            fs::read(fixture.repo.join("tracked.txt")).unwrap(),
+            b"base\n"
+        );
+    }
+    #[tokio::test]
+    async fn fork_cleanup_retains_new_ignored_files_and_other_owners() {
+        let fixture = Fixture::new();
+        let guard = fork_guard(&fixture);
+        let path = PathBuf::from(guard.info["path"].as_str().unwrap());
+        fs::write(path.join("ignored.txt"), b"private new data\n").unwrap();
+        assert!(guard.rollback(None).await.unwrap_err().contains("retained"));
+        assert_eq!(
+            fs::read(path.join("ignored.txt")).unwrap(),
+            b"private new data\n"
+        );
+        let guard = fork_guard(&fixture);
+        let path = PathBuf::from(guard.info["path"].as_str().unwrap());
+        guard.commit("new-owner").await.unwrap();
+        assert!(guard
+            .rollback(Some("wrong-owner".into()))
+            .await
+            .unwrap_err()
+            .contains("owner"));
+        assert!(path.is_dir());
+    }
     struct Fixture {
         root: PathBuf,
         repo: PathBuf,
@@ -1854,6 +2490,296 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn worktree_include_uses_git_patterns_and_copies_only_ignored_regular_files() {
+        let f = Fixture::new();
+        fs::write(
+            f.repo.join(".gitignore"),
+            "ignored.txt\nbuild/\n*.secret\nAGENTS.override.md\n",
+        )
+        .unwrap();
+        fs::write(
+            f.repo.join(".worktreeinclude"),
+            "*.secret\nbuild/*\n!build/excluded.secret\nordinary.txt\n",
+        )
+        .unwrap();
+        f.git(&f.repo, &["add", ".gitignore", ".worktreeinclude"]);
+        f.git(&f.repo, &["commit", "-m", "worktree include"]);
+        fs::create_dir_all(f.repo.join("build/nested")).unwrap();
+        fs::write(f.repo.join("build/included.secret"), b"\0\xffcopy").unwrap();
+        fs::write(f.repo.join("build/excluded.secret"), "excluded").unwrap();
+        fs::write(
+            f.repo.join("build/nested/AGENTS.override.md"),
+            "instructions",
+        )
+        .unwrap();
+        fs::write(f.repo.join("AGENTS.override.md"), "root instructions").unwrap();
+        fs::write(f.repo.join("ordinary.txt"), "not ignored").unwrap();
+        fs::write(f.repo.join("ignored.txt"), "not selected").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            fs::set_permissions(
+                f.repo.join("build/included.secret"),
+                fs::Permissions::from_mode(0o750),
+            )
+            .unwrap();
+            symlink("included.secret", f.repo.join("build/link.secret")).unwrap();
+        }
+        let before = fs::read(f.repo.join(".git/index")).unwrap();
+        let tree = f.create();
+        let path = PathBuf::from(tree["path"].as_str().unwrap());
+        assert_eq!(
+            fs::read(path.join("build/included.secret")).unwrap(),
+            b"\0\xffcopy"
+        );
+        assert_eq!(
+            fs::read_to_string(path.join("build/nested/AGENTS.override.md")).unwrap(),
+            "instructions"
+        );
+        assert!(path.join("AGENTS.override.md").is_file());
+        for excluded in [
+            "build/excluded.secret",
+            "build/link.secret",
+            "ordinary.txt",
+            "ignored.txt",
+        ] {
+            assert!(!exists(&path.join(excluded)), "{excluded}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(path.join("build/included.secret"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o750
+            );
+        }
+        assert_eq!(fs::read(f.repo.join(".git/index")).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_include_never_overwrites_files_or_follows_target_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        fs::create_dir_all(f.repo.join("build")).unwrap();
+        fs::write(f.repo.join(".worktreeinclude"), "build/\nignored.txt\n").unwrap();
+        fs::write(f.repo.join("build/copy.txt"), "source").unwrap();
+        fs::write(f.repo.join("ignored.txt"), "source").unwrap();
+        let source = Repo::open(&f.repo.canonicalize().unwrap())
+            .unwrap()
+            .unwrap();
+        let target = f.root.join("target");
+        let outside = f.root.join("outside");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(target.join("ignored.txt"), "target").unwrap();
+        symlink(&outside, target.join("build")).unwrap();
+        assert!(copy_worktree_includes(&source, &target).is_err());
+        assert!(!outside.join("copy.txt").exists());
+        fs::remove_file(target.join("build")).unwrap();
+        copy_worktree_includes(&source, &target).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.join("ignored.txt")).unwrap(),
+            "target"
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_rollback_recognizes_initial_ignored_copies_and_retains_later_edits() {
+        let f = Fixture::new();
+        fs::write(f.repo.join(".worktreeinclude"), "ignored.txt\n").unwrap();
+        fs::write(f.repo.join("ignored.txt"), "initial").unwrap();
+        let first = fork_guard(&f);
+        let path = PathBuf::from(first.info["path"].as_str().unwrap());
+        assert!(path.join("ignored.txt").is_file());
+        first.rollback(None).await.unwrap();
+        assert!(!path.exists());
+        let second = fork_guard(&f);
+        let path = PathBuf::from(second.info["path"].as_str().unwrap());
+        fs::write(path.join("ignored.txt"), "edited").unwrap();
+        assert!(second.rollback(None).await.is_err());
+        assert_eq!(
+            fs::read_to_string(path.join("ignored.txt")).unwrap(),
+            "edited"
+        );
+    }
+
+    #[test]
+    fn create_with_local_changes_keeps_index_raw_files_and_source_unchanged() {
+        let fixture = Fixture::new();
+        fixture.git(&fixture.repo, &["mv", "tracked.txt", "renamed.txt"]);
+        fs::write(fixture.repo.join("renamed.txt"), b"staged\n").unwrap();
+        fs::write(fixture.repo.join("added.bin"), [0, 255, 13, 10]).unwrap();
+        fixture.git(&fixture.repo, &["add", "renamed.txt", "added.bin"]);
+        fs::write(fixture.repo.join("renamed.txt"), b"unstaged\r\n").unwrap();
+        fs::write(fixture.repo.join("added.bin"), [255, 0, 10, 13]).unwrap();
+        fs::remove_file(fixture.repo.join("src/file.txt")).unwrap();
+        fs::write(fixture.repo.join("ignored.txt"), b"excluded ignored data").unwrap();
+        fs::create_dir(fixture.repo.join("empty")).unwrap();
+        let unusual = "untracked 中文\n\"raw.bin";
+        fs::write(fixture.repo.join(unusual), [0, 128, 255]).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            fs::set_permissions(
+                fixture.repo.join("renamed.txt"),
+                fs::Permissions::from_mode(0o750),
+            )
+            .unwrap();
+            fs::set_permissions(
+                fixture.repo.join(unusual),
+                fs::Permissions::from_mode(0o600),
+            )
+            .unwrap();
+            symlink("../missing-target", fixture.repo.join("local-link")).unwrap();
+        }
+        let source = Repo::open(&fixture.repo.canonicalize().unwrap())
+            .unwrap()
+            .unwrap();
+        let expected = fixture.store.local_snapshot(&source, "source").unwrap();
+        let source_index = fs::read(source.admin_path("index").unwrap()).unwrap();
+        let source_head = fixture.git(&fixture.repo, &["rev-parse", "HEAD"]);
+        let copied = fixture
+            .call(
+                "workspace/worktree/create",
+                json!({"name":"Local changes","branch":"codex/local-copy","includeLocalChanges":true}),
+            )
+            .unwrap()["worktree"]
+            .clone();
+        let path = PathBuf::from(copied["path"].as_str().unwrap());
+        let checkout = Repo::open(&path).unwrap().unwrap();
+        let actual = raw_snapshot(&checkout, "copy", false).unwrap();
+        assert_eq!(actual.entries, expected.entries);
+        assert_eq!(actual.directories, expected.directories);
+        assert_eq!(actual.index_tree, expected.index_tree);
+        assert_eq!(actual.head, expected.head);
+        assert_eq!(
+            fs::read(source.admin_path("index").unwrap()).unwrap(),
+            source_index
+        );
+        assert_eq!(
+            fixture.git(&fixture.repo, &["rev-parse", "HEAD"]),
+            source_head
+        );
+        assert_eq!(
+            fixture.git(&fixture.repo, &["branch", "--show-current"]),
+            "main"
+        );
+        assert_eq!(
+            fixture.store.local_snapshot(&source, "source").unwrap(),
+            expected
+        );
+        assert_eq!(
+            fs::read(fixture.repo.join("ignored.txt")).unwrap(),
+            b"excluded ignored data"
+        );
+        assert!(!path.join("ignored.txt").exists());
+        assert!(path.join(".git").is_file());
+        assert_eq!(copied["includeLocalChanges"], true);
+        assert_eq!(copied["dirtyStatus"]["clean"], false);
+        assert!(fs::read_dir(fixture.store.home.join("workspace-tmp"))
+            .unwrap()
+            .next()
+            .is_none());
+    }
+    #[test]
+    fn local_state_copy_preserves_a_split_index_and_staged_working_separation() {
+        let fixture = Fixture::new();
+        fixture.git(&fixture.repo, &["update-index", "--split-index"]);
+        fs::write(fixture.repo.join("tracked.txt"), b"staged\n").unwrap();
+        fixture.git(&fixture.repo, &["add", "tracked.txt"]);
+        fs::write(fixture.repo.join("tracked.txt"), b"working\n").unwrap();
+        let before = fs::read(fixture.repo.join(".git/index")).unwrap();
+        let result = fixture
+            .call(
+                "workspace/worktree/create",
+                json!({"detached":true,"includeLocalChanges":true}),
+            )
+            .unwrap();
+        let target = PathBuf::from(result["worktree"]["path"].as_str().unwrap());
+        assert_eq!(fs::read(target.join("tracked.txt")).unwrap(), b"working\n");
+        assert_eq!(fixture.git(&target, &["show", ":tracked.txt"]), "staged");
+        assert_eq!(fs::read(fixture.repo.join(".git/index")).unwrap(), before);
+    }
+
+    #[test]
+    fn local_changes_reject_different_base_and_roll_back_failed_creation() {
+        let fixture = Fixture::new();
+        fs::write(fixture.repo.join("tracked.txt"), b"second commit\n").unwrap();
+        fixture.git(&fixture.repo, &["add", "tracked.txt"]);
+        fixture.git(&fixture.repo, &["commit", "-m", "second"]);
+        fs::write(fixture.repo.join("tracked.txt"), b"keep local state\n").unwrap();
+        let source = Repo::open(&fixture.repo.canonicalize().unwrap())
+            .unwrap()
+            .unwrap();
+        let before = fixture.store.local_snapshot(&source, "source").unwrap();
+        assert!(fixture
+            .call(
+                "workspace/worktree/create",
+                json!({"baseRef":"HEAD^","branch":"codex/wrong-base","includeLocalChanges":true})
+            )
+            .unwrap_err()
+            .contains("current HEAD"));
+        assert!(source.resolve("refs/heads/codex/wrong-base").is_err());
+        assert!(fixture.store.load().unwrap()["worktrees"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+
+        // Snapshot capture succeeds, but the final real diff/status fails. All
+        // newly created files, Git registration and branch must roll back.
+        fixture.git(
+            &fixture.repo,
+            &["config", "diff.algorithm", "invalid-test-algorithm"],
+        );
+        let error = fixture
+            .call(
+                "workspace/worktree/create",
+                json!({"branch":"codex/failing-copy","includeLocalChanges":true}),
+            )
+            .unwrap_err();
+        assert!(error.contains("algorithm"), "{error}");
+        assert!(
+            error.starts_with("git diff:") || error.starts_with("git status:"),
+            "{error}"
+        );
+        assert!(source.resolve("refs/heads/codex/failing-copy").is_err());
+        assert_eq!(git_worktrees(&source).unwrap().len(), 1);
+        assert!(fixture.store.load().unwrap()["worktrees"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+        assert!(fs::read_dir(fixture.store.home.join("worktrees"))
+            .unwrap()
+            .next()
+            .is_none());
+        assert_eq!(
+            fixture.store.local_snapshot(&source, "source").unwrap(),
+            before
+        );
+        fixture.git(&fixture.repo, &["config", "--unset", "diff.algorithm"]);
+        fs::write(fixture.repo.join("intent.txt"), b"intent to add\n").unwrap();
+        fixture.git(&fixture.repo, &["add", "-N", "intent.txt"]);
+        let index_before = fs::read(source.admin_path("index").unwrap()).unwrap();
+        assert!(fixture
+            .call(
+                "workspace/worktree/create",
+                json!({"branch":"codex/intent-copy","includeLocalChanges":true})
+            )
+            .unwrap_err()
+            .contains("intent-to-add"));
+        assert_eq!(
+            fs::read(source.admin_path("index").unwrap()).unwrap(),
+            index_before
+        );
+        assert!(source.resolve("refs/heads/codex/intent-copy").is_err());
     }
 
     #[test]
@@ -2106,7 +3032,7 @@ mod tests {
                 json!({"id":id,"includeIgnored":true}),
             )
             .unwrap();
-        fs::create_dir(&path).unwrap();
+        fs::create_dir_all(&path).unwrap();
         fs::write(path.join("new-data"), b"new user files").unwrap();
         assert!(fixture
             .call("workspace/worktree/restore", json!({"id":id}))
@@ -2331,6 +3257,7 @@ mod tests {
             .unwrap();
         let outside = fixture.root.join("outside");
         fs::create_dir(&outside).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         symlink(&outside, &path).unwrap();
         assert!(fixture
             .call("workspace/worktree/restore", json!({"id":id}))

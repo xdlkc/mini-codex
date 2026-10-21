@@ -1,0 +1,39 @@
+#modal-backdrop.codex-handoff-modal{background:rgb(0 0 0 / 28%);backdrop-filter:none}
+.codex-handoff-modal .modal-card{position:relative;width:420px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 40px);border-radius:24px;background:var(--bg-elevated);box-shadow:0 8px 32px #0002}
+.codex-handoff-modal .modal-hdr{position:absolute;right:10px;top:10px;padding:0;border:0;font-size:0;z-index:1}
+.codex-handoff-modal .modal-hdr .icon-btn{font-size:16px}
+.codex-handoff-modal #modal-title{display:none}
+.codex-handoff-modal .modal-body{padding:24px;gap:20px;font-size:16px;line-height:24px;letter-spacing:-.13px}
+.codex-handoff-icon{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:var(--bg-subtle);flex:none}
+.codex-handoff-icon svg{width:20px;height:20px;transform:rotate(90deg)}
+.codex-handoff-icon.success{width:40px;height:40px;background:#008c5133;color:#008c51}
+.codex-handoff-icon.success svg{width:24px;height:24px;transform:none}
+.codex-handoff-heading{font-size:22px;line-height:28px;letter-spacing:-.4px;font-weight:600;margin:0;padding-right:10px}
+.codex-handoff-description{color:var(--text-secondary);margin:0;overflow-wrap:anywhere}
+.codex-handoff-branch-chip{display:inline-block;max-width:100%;overflow-wrap:anywhere;border-radius:8px;background:var(--bg-subtle);padding:2px 8px;color:var(--text-primary)}
+.codex-handoff-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--text-secondary)}
+.codex-handoff-select,.codex-handoff-branch,.codex-handoff-workspace{font:inherit;line-height:24px;letter-spacing:inherit;border:0;border-radius:8px;padding:3px 8px;color:var(--text-primary);background:var(--bg-subtle);max-width:100%;min-width:0}
+.codex-handoff-select{font-weight:500;flex-shrink:1;text-overflow:ellipsis}
+.codex-handoff-branch{width:192px;box-sizing:border-box;margin:0 4px;outline:none}
+.codex-handoff-field{display:flex;flex-direction:column;gap:8px;color:var(--text-secondary)}
+.codex-handoff-field .codex-handoff-branch{width:100%;margin:0;padding:10px 12px}
+.codex-handoff-workspace{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.codex-handoff-primary{height:44px;min-height:44px;border-radius:999px;background:var(--text-primary);color:var(--bg-primary);border:0;padding:0 16px;font:inherit;font-weight:500;cursor:pointer;width:100%}
+.codex-handoff-warning{display:flex;gap:8px;margin:0;color:var(--text-primary);overflow-wrap:anywhere}
+.codex-handoff-warning:before{content:'⚠';color:#a15c00;flex:none}
+.codex-handoff-error{color:var(--red-500,#bc3434);margin:0;text-align:center;overflow-wrap:anywhere}
+.codex-handoff-error:empty{display:none}
+.codex-handoff-details{font-size:13px;line-height:20px;color:var(--text-secondary)}
+.codex-handoff-details pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto}
+.codex-handoff-steps{padding:0;margin:0;list-style:none;display:flex;flex-direction:column;gap:16px}
+.codex-handoff-steps li{display:flex;align-items:center;gap:12px;color:var(--text-tertiary)}
+.codex-handoff-steps li:before{content:'';display:block;width:14px;height:14px;box-sizing:border-box;border:1.5px solid currentColor;border-radius:50%;flex:none}
+.codex-handoff-steps li.done{color:var(--text-primary)}
+.codex-handoff-steps li.done:before{content:'✓';border:0;line-height:14px}
+.codex-handoff-steps li.running{color:var(--text-primary);font-weight:500}
+.codex-handoff-steps li.running:before{border-right-color:transparent;animation:codex-handoff-spin 1s linear infinite}
+#codex-handoff-strip{align-self:center;max-width:calc(100% - 32px);border:0;background:transparent;color:var(--text-secondary);padding:6px 12px;font-size:13px;cursor:pointer;border-radius:8px}
+#codex-handoff-strip[hidden],.codex-handoff-warning[hidden]{display:none}
+#codex-handoff-strip:hover{background:var(--bg-hover)}
+@keyframes codex-handoff-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.codex-handoff-steps li.running:before{animation:none}}

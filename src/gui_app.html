@@ -1830,12 +1830,16 @@ function renderApprovalCard(reqId, method, p) {
   card.className = "approval-card";
   const isPatch = method.includes("fileChange");
   const title = isPatch ? "Allow Codex to edit files?" : "Allow Codex to run command?";
-  const detail = p.command || `Workspace: ${p.cwd || currentCwd}`;
+  const detail = p.command || p.files?.join("\n") || `Workspace: ${p.cwd || currentCwd}`;
+  const choices=p.availableDecisions;
+  const allowSession=!Array.isArray(choices)||choices.includes('acceptForSession');
+  const denyChoice=Array.isArray(choices)&&!choices.includes('decline')?'cancel':'decline';
   card.innerHTML = `<div class="approval-hdr">${SANDBOX_ICONS["danger-full-access"]} <span>${title}</span></div>
     <div class="approval-cmd">${escapeHtml(detail)}</div>
+    ${p.reason?`<p class="approval-reason">${escapeHtml(p.reason)}</p>`:''}
     <div class="approval-actions">
-      <button class="btn-pill danger" data-dec="decline">Deny</button>
-      <button class="btn-pill" data-dec="acceptForSession">Allow this conversation</button>
+      <button class="btn-pill danger" data-dec="${denyChoice}">${denyChoice==='cancel'?'Cancel':'Deny'}</button>
+      ${allowSession?`<button class="btn-pill" data-dec="acceptForSession">${isPatch?'Allow these files for this conversation':'Allow this conversation'}</button>`:''}
       <button class="btn-pill primary" data-dec="accept">Allow once</button>
     </div>`;
   card.querySelectorAll("button[data-dec]").forEach(btn => {
@@ -2866,6 +2870,7 @@ composerEl.addEventListener("keydown", e => {
 });
 
 window.addEventListener("keydown", e => {
+  if(e.defaultPrevented||e.target?.closest?.('#codex-terminal-panel')&&e.metaKey&&e.key.toLowerCase()==='k')return;
   if (e.metaKey && e.key.toLowerCase() === "n") {
     e.preventDefault();
     closeSettingsView();

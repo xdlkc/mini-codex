@@ -560,7 +560,15 @@ pub fn get(thread_id: &str) -> Result<Option<Value>, String> {
     store().get(thread_id)
 }
 pub fn pending() -> Result<Vec<Value>, String> {
-    store().pending()
+    Ok(store()
+        .pending()?
+        .into_iter()
+        .filter(|goal| {
+            goal["threadId"]
+                .as_str()
+                .is_some_and(|id| crate::thread_lifecycle::access(id).is_ok())
+        })
+        .collect())
 }
 pub fn begin_turn(thread_id: &str, turn_id: &str) -> Result<Option<Value>, String> {
     store().begin_turn(thread_id, turn_id)

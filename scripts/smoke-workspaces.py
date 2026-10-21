@@ -210,8 +210,7 @@ def run(binary: Path, timeout: float) -> None:
             app.reject("worktree/archive", other, id=created["id"])
             check(checkout.exists(), "foreign repository archive removed a checkout")
             app.reject("worktree/create", source, "already exists", name="Conflicting branch", branch="codex/smoke-safe")
-            failed_creation = next(item for item in app.workspace("worktree/list", source)["data"] if item.get("name") == "Conflicting branch")
-            check(failed_creation["state"] == "error" and failed_creation.get("error") and not Path(failed_creation["path"]).exists(), "failed creation lost its recoverable ownership/error record")
+            check(not any(item.get("name") == "Conflicting branch" for item in app.workspace("worktree/list", source)["data"]), "rejected creation left a worktree or temporary ownership record")
             check(fingerprint(source) == original, "failed worktree creation changed original data")
 
             populate_dirty_worktree(checkout)
@@ -222,6 +221,23 @@ def run(binary: Path, timeout: float) -> None:
             staged = app.workspace("gitDiff", checkout, staged=True, path="mixed.txt")["diff"]
             unstaged = app.workspace("gitDiff", checkout, staged=False, path="mixed.txt")["diff"]
             check("staged version" in staged and "Binary files" in unstaged, "staged and unstaged diff RPCs did not select different states")
+
+            # Explicit local-state creation preserves Git's index and raw working
+            # bytes. The original checkout, including ignored bytes, stays intact.
+            source_index = Path(git(checkout, "rev-parse", "--git-path", "index").strip().decode())
+            index_bytes = source_index.read_bytes()
+            copied = app.workspace("worktree/create", selected, name="With local code changes", branch="codex/local-state-copy", includeLocalChanges=True)["worktree"]
+            copied_path = Path(copied["path"])
+            copied_state = fingerprint(copied_path)
+            expected_files = {name: value for name, value in dirty[3].items() if name != "ignored/secret.cache"}
+            check(copied["includeLocalChanges"] and Path(copied["cwd"]) == copied_path / "nested", "local state creation lost its choice or selected subdirectory")
+            check(copied_state[0] == dirty[0] and copied_state[2] == dirty[2] and copied_state[3] == expected_files, "local-state copy changed staged/unstaged files, deletion, binary bytes, permissions or symlink targets")
+            check(source_index.read_bytes() == index_bytes and fingerprint(checkout) == dirty, "local-state copy changed the source index, files, branch or HEAD")
+            check((copied_path / ".git").is_file() and not (copied_path / "ignored/secret.cache").exists(), "local-state copy copied Git metadata or ignored contents")
+            tree_for_base = git(checkout, "rev-parse", "HEAD^{tree}").strip().decode()
+            different_base = git(checkout, "commit-tree", tree_for_base, "-p", dirty[0].decode(), data=b"incompatible local-copy base\n").strip().decode()
+            app.reject("worktree/create", selected, "current HEAD", branch="codex/wrong-base", baseRef=different_base, includeLocalChanges=True)
+            check(not git(source, "show-ref", "--verify", "refs/heads/codex/wrong-base", allow_error=True) and fingerprint(checkout) == dirty, "incompatible-base copy changed source files or left a branch")
 
             # Rejections must leave the complete dirty checkout and index intact.
             app.reject("worktree/archive", source, "ignored", id=created["id"])
@@ -260,7 +276,7 @@ def run(binary: Path, timeout: float) -> None:
             check(git(source, "rev-parse", snapshot["commit"] + "^").strip().decode() == snapshot["indexCommit"] and git(source, "rev-parse", snapshot["indexCommit"] + "^").strip() == dirty[0], "recovery commits lost original HEAD/index ancestry")
             check(git(source, "cat-file", "-t", snapshot["manifestRef"]).strip() == b"blob", "recovery manifest is not protected by a Git ref")
 
-            checkout.mkdir()
+            checkout.mkdir(parents=True)
             (checkout / "do-not-overwrite").write_bytes(b"sentinel")
             app.reject("worktree/restore", source, "already exists", id=created["id"])
             check((checkout / "do-not-overwrite").read_bytes() == b"sentinel", "restore overwrote an existing destination")

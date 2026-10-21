@@ -1,0 +1,5 @@
+.codex-fork-submenu{position:fixed;z-index:92;width:300px;max-width:calc(100vw - 20px);max-height:calc(100vh - 20px);overflow:auto;padding:6px;border-radius:12px;border:1px solid var(--border-default);background:var(--bg-elevated);box-shadow:0 12px 32px #0002}
+.codex-fork-submenu .menu-item{min-height:36px;font-size:14px}
+.codex-fork-reason{margin:6px 10px;font-size:12px;line-height:1.45;color:var(--text-tertiary)}
+.codex-fork-reason:empty{display:none}
+body[data-mode=codex] [data-thread-action=fork] .tool-inline-chev{opacity:.65}

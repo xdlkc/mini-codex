@@ -129,9 +129,11 @@ class MockResponses:
     def report(self, summary: str, has_update: bool, tokens: int = 2) -> Response:
         return self.plan("scheduled_task_report", {"summary": summary, "hasUpdate": has_update}, tokens)
 
-    def shell(self, artifact: str, tokens: int, marker: str = "") -> Response:
+    def shell(self, artifact: str, tokens: int, marker: str = "", approval: bool = False) -> Response:
         require(artifact.replace("-", "").replace(".", "").isalnum(), "artifact must be a fixed safe fixture filename")
-        return self.plan("shell", {"command": ["/bin/sh", "-c", f"printf fixture-work > {artifact}"]}, tokens, marker)
+        arguments={"command": ["/bin/sh", "-c", f"printf fixture-work > {artifact}"]}
+        if approval:arguments.update(sandbox_permissions='require_escalated',justification='Exercise the explicit approval boundary in an isolated fixture')
+        return self.plan("shell", arguments, tokens, marker)
 
     def fail(self) -> None:
         response = Response("failed")
@@ -290,7 +292,7 @@ def run(binary: Path, timeout: float) -> None:
             app = AppServer(binary, store, workspace, mock.base_url, timeout)
             try:
                 initialize(app, store)
-                mock.shell("goal-artifact.txt", 7, "GOAL_CHAIN")
+                mock.shell("goal-artifact.txt", 7, "GOAL_CHAIN", approval=True)
                 mock.checkpoint("active", 11, "GOAL_CHAIN", nextPrompt="GOAL_CHAIN final verification")
                 mock.checkpoint("complete", 17, "GOAL_CHAIN")
                 chain = start_goal(app, "GOAL_CHAIN write an artifact and verify the entire objective")
@@ -306,7 +308,7 @@ def run(binary: Path, timeout: float) -> None:
                 no_internal_tools_in_timeline(app, chain)
                 passed("Goal shell approval, same-chat automatic continuation, checkpoints, real usage, and hidden bookkeeping tools")
 
-                mock.shell("queue-artifact.txt", 2, "GOAL_QUEUE_PRIORITY")
+                mock.shell("queue-artifact.txt", 2, "GOAL_QUEUE_PRIORITY", approval=True)
                 mock.checkpoint("active", 3, "GOAL_QUEUE_PRIORITY", nextPrompt="AUTOMATIC_PROMPT_MUST_NOT_WIN")
                 mock.checkpoint("complete", 5, "GOAL_QUEUE_PRIORITY")
                 queued_goal = start_goal(app, "GOAL_QUEUE_PRIORITY finish work after following the user's steering")
@@ -378,7 +380,7 @@ def run(binary: Path, timeout: float) -> None:
                 require(replaced is not None and replaced["objective"].startswith("GOAL_REPLACE_NEW") and replaced["tokensUsed"] == 0 and replaced["turnsStarted"] == 0, "old in-flight work was charged to the replacement goal")
                 passed("pause and replacement cancel slow streams without charging late usage")
 
-                mock.shell("never-paused.txt", 5, "GOAL_EDIT_APPROVAL")
+                mock.shell("never-paused.txt", 5, "GOAL_EDIT_APPROVAL", approval=True)
                 edited = start_goal(app, "GOAL_EDIT_APPROVAL old instructions")
                 mock.request()
                 app.approval(edited)
@@ -387,7 +389,7 @@ def run(binary: Path, timeout: float) -> None:
                 require(changed["tokensUsed"] == 5 and changed["status"] == "paused", "editing reset real usage or resumed paused work")
                 require(not (workspace / "never-paused.txt").exists(), "paused approval executed its shell")
 
-                mock.shell("never-cleared.txt", 6, "GOAL_CLEAR_APPROVAL")
+                mock.shell("never-cleared.txt", 6, "GOAL_CLEAR_APPROVAL", approval=True)
                 cleared = start_goal(app, "GOAL_CLEAR_APPROVAL clear while waiting")
                 mock.request()
                 app.approval(cleared)

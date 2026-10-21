@@ -41,6 +41,8 @@ pub enum Verdict {
     /// Approve and stop asking for the rest of the session.
     Always,
     No,
+    Cancel,
+    SaveRule,
 }
 
 pub enum Event {
@@ -66,11 +68,20 @@ pub enum Event {
     ToolEnd {
         id: String,
         output: String,
+        denied: bool,
+    },
+    ToolExecuting {
+        id: String,
     },
     Approval {
         id: String,
         name: String,
         what: String,
+        cwd: String,
+        reason: Option<String>,
+        allow_session: bool,
+        files: Vec<String>,
+        proposed_rule: Option<Vec<String>>,
         reply: oneshot::Sender<Verdict>,
     },
     Usage {
@@ -78,11 +89,17 @@ pub enum Event {
     },
     GoalState(Value),
     TaskReport(Value),
+    ApprovalReview(Value),
+    TurnCancelled,
+    Warning(String),
     Done,
     Error(String),
 }
 
 pub struct Agent {
+    pub approvals_reviewer: crate::guardian::Reviewer,
+    pub model_catalog: std::sync::Arc<crate::models::Catalog>,
+    pub pending_context: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
     pub client: Client,
     pub model: String,
     pub reasoning_effort: String,
@@ -97,9 +114,17 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn record(&mut self, mut item: Value) {
+    pub fn drain_context(&mut self) -> Result<()> {
+        let mut pending = self.pending_context.lock().unwrap();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        self.session.append_batch_checked(&pending)?;
+        self.history.extend(pending.drain(..));
+        Ok(())
+    }
+    fn record(&mut self, item: Value) {
         self.session.append(&item);
-        strip_private_fields(&mut item);
         self.history.push(item);
     }
 
@@ -157,11 +182,8 @@ impl Agent {
         internal: bool,
         presentation: Option<Value>,
     ) {
-        // TUI and resumed desktop sessions can provide raw persisted records.
-        // Private UI flags belong only to the rollout, never to Responses input.
-        for item in &mut self.history {
-            strip_private_fields(item);
-        }
+        // Retain host provenance for the reviewer. Responses receives a clean
+        // projection, including when this history came from a saved rollout.
         self.fix_dangling();
         match self.turn_inner(content, tx, internal, presentation).await {
             Ok(()) => tx.send(Event::Done).ok(),
@@ -183,6 +205,29 @@ impl Agent {
         self.record(record);
         let mut first_request = true;
         loop {
+            self.drain_context()?;
+            // A running model step retains its issuing permissions. Updates are
+            // picked up before the next step, never halfway through a review.
+            if let Some(saved) = crate::desktop::handle(
+                "desktop/threadMetadata/read",
+                &json!({"threadId":self.session.id}),
+            ) {
+                let saved = saved.map_err(anyhow::Error::msg)?;
+                let saved = &saved["metadata"];
+                if let Some(mode) = saved["sandboxMode"].as_str() {
+                    self.ctx.sandbox = match mode {
+                        "read-only" => tools::Sandbox::ReadOnly,
+                        "danger-full-access" => tools::Sandbox::DangerFullAccess,
+                        _ => tools::Sandbox::WorkspaceWrite,
+                    };
+                }
+                if let Some(policy) = saved["approvalPolicy"].as_str() {
+                    self.ctx.auto_approve = policy == "never";
+                }
+                if let Some(reviewer) = saved.get("approvalsReviewer") {
+                    self.approvals_reviewer = crate::guardian::Reviewer::parse(reviewer)?;
+                }
+            }
             let mut tools = if self.mode == "chat" {
                 json!([])
             } else {
@@ -215,7 +260,7 @@ impl Agent {
                     &self.model,
                     &self.reasoning_effort,
                     &instructions,
-                    &self.history,
+                    &model_history(self.history.clone()),
                     &tools,
                     first_request && self.web_search == crate::web_search::SearchMode::Required,
                     |ev| match ev {
@@ -349,14 +394,52 @@ impl Agent {
                     name: c.name.clone(),
                     args: c.arguments.clone(),
                 });
-                let out = tools::run(&c.call_id, &c.name, &c.arguments, &self.ctx, tx).await;
+                let plan = tools::prepare(&c.name, &c.arguments, &self.ctx);
+                let out = if let Ok(mut plan) = plan {
+                    plan.report_warnings(tx);
+                    if plan.needs_review()
+                        && self.approvals_reviewer == crate::guardian::Reviewer::Guardian
+                    {
+                        let review_model = self
+                            .model_catalog
+                            .review_model(&self.model, &self.reasoning_effort)
+                            .await;
+                        self.drain_context()?;
+                        let assessment = crate::guardian::review(
+                            &self.client,
+                            &review_model,
+                            &self.instructions,
+                            &self.history,
+                            &self.ctx,
+                            &c.call_id,
+                            &plan,
+                            self.goal_thread_id.as_deref(),
+                            tx,
+                        )
+                        .await;
+                        if assessment.approved {
+                            tools::run_plan(&c.call_id, plan, &self.ctx, tx, true).await
+                        } else {
+                            tools::ToolResult::denied(format!("Automatic approval review denied this action: {}. Explain the blocked action and its reason to the user. Do not claim it ran. If authorization is missing, ask for that specific authorization. If review failed, address the reported failure before retrying. Do not bypass this decision by changing tools or command spelling.",assessment.review["rationale"].as_str().unwrap_or("The action was not approved")))
+                        }
+                    } else {
+                        tools::run_plan(&c.call_id, plan, &self.ctx, tx, false).await
+                    }
+                } else {
+                    tools::run(&c.call_id, &c.name, &c.arguments, &self.ctx, tx).await
+                };
                 let _ = tx.send(Event::ToolEnd {
                     id: c.call_id.clone(),
-                    output: out.clone(),
+                    output: out.output.clone(),
+                    denied: out.denied,
                 });
                 self.record(
-                    json!({"type": "function_call_output", "call_id": c.call_id, "output": out}),
+                    json!({"type": "function_call_output", "call_id": c.call_id, "output": out.output,"_mcodex_tool_denied":out.denied}),
                 );
+                if out.cancelled {
+                    let _ = tx.send(Event::TurnCancelled);
+                    return Ok(());
+                }
             }
         }
     }
@@ -563,6 +646,9 @@ mod tests {
         search: crate::web_search::SearchMode,
     ) -> Agent {
         Agent {
+            approvals_reviewer: Default::default(),
+            model_catalog: std::sync::Arc::new(crate::models::Catalog::default()),
+            pending_context: Default::default(),
             client: Client::test_at(base),
             model: "local-fixture".into(),
             reasoning_effort: "auto".into(),
@@ -578,6 +664,8 @@ mod tests {
                 mcp: std::sync::Arc::new(crate::mcp::Mcp::default()),
                 plugins: vec![],
                 session_allow: std::sync::atomic::AtomicBool::new(false),
+                patch_grants: Default::default(),
+                rules_home: None,
             },
             history: vec![],
             session: Session::create_in(&root.0, &root.0.to_string_lossy(), "local-fixture")
@@ -683,7 +771,18 @@ mod tests {
             crate::web_search::SearchMode::Required,
         );
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        agent.turn("Search before continuing", &tx).await;
+        let work = agent.turn("Search before continuing", &tx);
+        tokio::pin!(work);
+        let mut denied_patch = false;
+        let mut observed = Vec::new();
+        loop {
+            tokio::select! {
+                _=&mut work=>break,
+                event=rx.recv()=>if let Some(event)=event {match event{Event::Approval{name,reply,..}=>{assert_eq!(name,"apply_patch");denied_patch=true;reply.send(Verdict::No).unwrap();},event=>observed.push(event)}},
+            }
+        }
+        drop(work);
+        assert!(denied_patch);
         let requests = server.requests.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0]["tool_choice"], json!({"type":"web_search"}));
@@ -700,12 +799,12 @@ mod tests {
                 .iter()
                 .any(|tool| tool["type"] == "function" && tool["name"] == "apply_patch"));
         }
-        let events = events(&mut rx);
-        assert!(events.iter().any(
-            |event| matches!(event,Event::ToolEnd{output,..} if output.contains("read-only"))
-        ));
-        assert!(events.iter().any(|event| matches!(event, Event::Done)));
-        assert!(!events
+        observed.extend(events(&mut rx));
+        assert!(observed
+            .iter()
+            .any(|event| matches!(event, Event::ToolEnd { denied: true, .. })));
+        assert!(observed.iter().any(|event| matches!(event, Event::Done)));
+        assert!(!observed
             .iter()
             .any(|event| matches!(event, Event::Error(_) | Event::Approval { .. })));
         assert!(!root.0.join("forbidden").exists());

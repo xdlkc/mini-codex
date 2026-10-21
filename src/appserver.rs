@@ -7,10 +7,14 @@ use crate::session::{self, Session};
 use crate::tools::{Sandbox, ToolCtx};
 use crate::{
     account, api, attachments, auth, config, desktop, document_ai, goals, images, mcp, models,
-    plugin, remote, scheduler, voice, workspaces,
+    plugin, remote, scheduler, thread_lifecycle, voice, workspaces,
 };
 #[path = "scheduled_runtime.rs"]
 mod scheduled_runtime;
+#[path = "thread_forks.rs"]
+mod thread_forks;
+#[path = "thread_handoff.rs"]
+mod thread_handoff;
 #[path = "voice_runtime.rs"]
 mod voice_runtime;
 use crate::web_search::SearchMode;
@@ -46,6 +50,8 @@ struct Thread {
     cwd: String,
     created_ms: u64,
     queued_inputs: Mutex<std::collections::VecDeque<Value>>,
+    pending_context: Arc<Mutex<Vec<Value>>>,
+    context_gate: AsyncMutex<()>,
     voice_call: Mutex<Option<String>>,
     sandbox: Mutex<Sandbox>,
 }
@@ -60,13 +66,16 @@ struct Server {
     scheduled_jobs: Mutex<HashMap<String, JoinHandle<()>>>,
     automation_error: Mutex<Option<String>>,
     workspace_gate: AsyncMutex<()>,
+    active_handoffs: Mutex<HashMap<String, String>>,
     account: account::Account,
     voice: voice::Voice,
     voice_bindings: Mutex<HashMap<String, Arc<VoiceBinding>>>,
-    models: models::Catalog,
+    models: Arc<models::Catalog>,
     remote: remote::RemoteHub,
     images: images::Images,
     document_ai: document_ai::DocumentAi,
+    local_environments: crate::local_environments::Environments,
+    terminals: crate::terminal::Terminals,
 }
 
 struct VoiceBinding {
@@ -74,6 +83,8 @@ struct VoiceBinding {
     saved: AsyncMutex<Vec<Value>>,
     ended: std::sync::atomic::AtomicBool,
     created_ms: u64,
+    execution: Mutex<Option<std::fs::File>>,
+    checkout_execution: Mutex<Option<std::fs::File>>,
 }
 
 struct PendingApproval {
@@ -138,9 +149,24 @@ impl LiveTurn {
                     .iter_mut()
                     .find(|existing| existing["id"] == item["id"])
                 {
+                    if item.get("approvalReview").is_none() {
+                        if let Some(review) = existing.get("approvalReview") {
+                            item["approvalReview"] = review.clone();
+                        }
+                    }
                     *existing = item;
                 } else {
                     items.push(item);
+                }
+            }
+            "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
+                if let Some(item) = self.turn["items"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|item| item["id"] == params["targetItemId"])
+                {
+                    item["approvalReview"] = params["review"].clone();
                 }
             }
             "item/agentMessage/delta"
@@ -176,6 +202,11 @@ impl LiveTurn {
     }
 }
 
+fn reviewed_turn(turn: &Value) -> bool {
+    turn["items"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item["approvalReview"].is_object()))
+}
 fn turns_with_snapshot(items: &[Value], cwd: &str, live: Option<&LiveTurn>) -> Vec<Value> {
     turns_with_snapshot_ui(items, cwd, live, &Value::Null)
 }
@@ -186,7 +217,9 @@ fn turns_with_snapshot_ui(
     meta: &Value,
 ) -> Vec<Value> {
     if let Some(live) = live.filter(|live| {
-        live.is_active() || matches!(live.turn["status"].as_str(), Some("failed" | "interrupted"))
+        live.is_active()
+            || matches!(live.turn["status"].as_str(), Some("failed" | "interrupted"))
+            || reviewed_turn(&live.turn)
     }) {
         let mut turns =
             history_to_turns_with_ui(&items[..items.len().min(live.history_len)], cwd, meta);
@@ -401,7 +434,7 @@ fn history_to_turns(items: &[Value], cwd: &str) -> Vec<Value> {
                     .cloned(),
             );
             turns.push(json!({"id": format!("turn_{n}"), "status": "completed", "items": [
-                {"type": "userMessage", "id": format!("item_{n}"), "internal":crate::agent::is_internal_user(i), "content": [{"type": "text", "text": text, "text_elements": []}],"attachments":files,"source":if i["_mcodex_voice"].is_object(){"voice"}else{"text"},"webSearchMode":i["_mcodex_display"]["webSearchMode"],"effectiveWebSearchMode":i["_mcodex_display"]["effectiveWebSearchMode"],"webSearch":i["_mcodex_display"]["webSearch"]}]}));
+                {"type": "userMessage", "id": format!("item_{n}"), "internal":crate::agent::is_internal_user(i), "content": [{"type": "text", "text": text, "text_elements": []}],"attachments":files,"workspaceFiles":i["_mcodex_display"]["workspaceFiles"].as_array().cloned().unwrap_or_default(),"source":if i["_mcodex_voice"].is_object(){"voice"}else{"text"},"webSearchMode":i["_mcodex_display"]["webSearchMode"],"effectiveWebSearchMode":i["_mcodex_display"]["effectiveWebSearchMode"],"webSearch":i["_mcodex_display"]["webSearch"]}]}));
             continue;
         }
         if turns.is_empty() && ty == "message" && i["role"] == "assistant" {
@@ -487,7 +520,11 @@ fn history_to_turns(items: &[Value], cwd: &str) -> Vec<Value> {
             "function_call_output" => {
                 if let Some(&(t, p)) = call_pos.get(i["call_id"].as_str().unwrap_or("")) {
                     let it = &mut turns[t]["items"][p];
-                    finish_tool_item(it, i["output"].as_str().unwrap_or(""));
+                    let output = i["output"].as_str().unwrap_or("");
+                    let denied = i["_mcodex_tool_denied"]
+                        .as_bool()
+                        .unwrap_or_else(|| legacy_tool_denial(output));
+                    finish_tool_item(it, output, denied);
                 }
             }
             _ => {}
@@ -507,7 +544,9 @@ fn history_to_turns_with_ui(items: &[Value], cwd: &str, meta: &Value) -> Vec<Val
         {
             continue;
         }
-        if !matches!(snapshot["status"].as_str(), Some("failed" | "interrupted")) {
+        if !matches!(snapshot["status"].as_str(), Some("failed" | "interrupted"))
+            && !reviewed_turn(snapshot)
+        {
             continue;
         }
         let Some(turn) = turns
@@ -729,8 +768,18 @@ fn tool_item(id: &str, name: &str, args: &str, cwd: &str) -> Value {
     }
 }
 
-fn finish_tool_item(item: &mut Value, output: &str) {
-    let declined = output.contains("rejected by user") || output.contains("denied");
+fn legacy_tool_denial(output: &str) -> bool {
+    [
+        "command rejected by user",
+        "patch rejected by user",
+        "tool call rejected by user",
+        "apply_patch denied:",
+        "Automatic approval review denied this action:",
+    ]
+    .iter()
+    .any(|prefix| output.starts_with(prefix))
+}
+fn finish_tool_item(item: &mut Value, output: &str, declined: bool) {
     let failed = output.starts_with("error:");
     match item["type"].as_str().unwrap_or("") {
         "commandExecution" => {
@@ -759,13 +808,21 @@ fn finish_tool_item(item: &mut Value, output: &str) {
             })
         }
         "mcpToolCall" => {
-            item["status"] = json!(if failed { "failed" } else { "completed" });
+            item["status"] = json!(if failed || declined {
+                "failed"
+            } else {
+                "completed"
+            });
             item["result"] =
                 json!({"content": [{"type": "text", "text": output}], "structuredContent": null});
         }
         _ => {
-            item["status"] = json!(if failed { "failed" } else { "completed" });
-            item["success"] = json!(!failed);
+            item["status"] = json!(if failed || declined {
+                "failed"
+            } else {
+                "completed"
+            });
+            item["success"] = json!(!failed && !declined);
             item["contentItems"] = json!([{"type": "inputText", "text": output}]);
         }
     }
@@ -862,8 +919,15 @@ fn codex_config_path() -> PathBuf {
     config::home().join("config.toml")
 }
 
-fn read_codex_config_table() -> toml::Table {std::fs::read_to_string(codex_config_path()).ok().and_then(|text|text.parse().ok()).unwrap_or_default()}
-fn effective_config_table() -> toml::Table {config::read_table()}
+fn read_codex_config_table() -> toml::Table {
+    std::fs::read_to_string(codex_config_path())
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or_default()
+}
+fn effective_config_table() -> toml::Table {
+    config::read_table()
+}
 
 fn write_codex_config_table(tbl: &toml::Table) -> Result<()> {
     let text = toml::to_string_pretty(tbl)?;
@@ -1028,8 +1092,11 @@ impl Server {
             .get("model_reasoning_effort")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .unwrap_or_else(||models::default_effort(model));
+            .unwrap_or_else(|| models::default_effort(model));
         Ok(Agent {
+            approvals_reviewer: Default::default(),
+            model_catalog: Arc::clone(&self.models),
+            pending_context: Default::default(),
             web_search: SearchMode::Disabled,
             client: match auth::Auth::load() {
                 Ok(auth) => api::Client::new(auth),
@@ -1048,14 +1115,17 @@ impl Server {
                 mcp: self.shared.mcp.clone(),
                 plugins,
                 session_allow: Default::default(),
+                patch_grants: Default::default(),
+                rules_home: Some(crate::config::home()),
             },
-            history: crate::agent::model_history(history),
+            history,
             session,
         })
     }
 
     fn register(&self, id: &str, agent: Agent, cwd: &str, created_ms: u64) -> Arc<Thread> {
         let sandbox = agent.ctx.sandbox;
+        let pending_context = Arc::clone(&agent.pending_context);
         let t = Arc::new(Thread {
             agent: Arc::new(AsyncMutex::new(agent)),
             start_lock: AsyncMutex::new(()),
@@ -1066,6 +1136,8 @@ impl Server {
             cwd: cwd.into(),
             created_ms,
             queued_inputs: Default::default(),
+            pending_context,
+            context_gate: Default::default(),
             voice_call: Default::default(),
             sandbox: Mutex::new(sandbox),
         });
@@ -1120,11 +1192,7 @@ impl Server {
                 )
             })?;
         self.notify("thread/goal/cleared", json!({"threadId":id}));
-        for task_id in heartbeats {
-            scheduler::handle("scheduler/update", &json!({"id":task_id,"state":"paused"}))
-                .ok_or_else(||(-32000,"Scheduler is unavailable".to_string()))?
-                .map_err(|error|(-32000,format!("Conversation was deleted, but heartbeat {task_id} could not be paused: {error}")))?;
-        }
+        scheduler::pause_deleted_heartbeats(heartbeats).map_err(|error| (-32000, format!("Conversation was deleted, but its heartbeat tasks could not be paused: {error}")))?;
         if !heartbeats.is_empty() {
             self.notify("scheduler/changed", json!({}));
         }
@@ -1132,6 +1200,27 @@ impl Server {
     }
 
     async fn handle_goal(self: &Arc<Self>, method: &str, mut params: Value) -> RpcResult {
+        if let Some(requested) = params["threadId"].as_str() {
+            match Session::open(Some(requested)) {
+                Ok((session, _, _)) => params["threadId"] = json!(session.id),
+                Err(error) if ["thread/goal/set", "thread/goal/clear"].contains(&method) => {
+                    return Err((-32000, error.to_string()))
+                }
+                Err(_) => {}
+            }
+        }
+        let _access = if ["thread/goal/set", "thread/goal/clear"].contains(&method) {
+            Some(
+                thread_lifecycle::access(
+                    params["threadId"]
+                        .as_str()
+                        .ok_or((-32602, "threadId is required".into()))?,
+                )
+                .map_err(|e| (-32000, e))?,
+            )
+        } else {
+            None
+        };
         let id = params["threadId"].as_str().map(String::from);
         if ["thread/goal/set", "thread/goal/clear"].contains(&method) {
             let id = id
@@ -1318,6 +1407,12 @@ impl Server {
                         if let Err(error) =
                             server.handle("thread/resume", json!({"threadId":id})).await
                         {
+                            if ["handed off", "archived", "unfinished handoff"]
+                                .iter()
+                                .any(|message| error.1.contains(message))
+                            {
+                                continue;
+                            }
                             let _ = goals::handle(
                                 "thread/goal/set",
                                 &json!({"threadId":id,"status":"paused"}),
@@ -1329,7 +1424,9 @@ impl Server {
                             continue;
                         }
                     }
-                    let thread = server.threads.lock().unwrap().get(id).cloned().unwrap();
+                    let Some(thread) = server.threads.lock().unwrap().get(id).cloned() else {
+                        continue;
+                    };
                     if thread.is_active() || !thread.queued_inputs.lock().unwrap().is_empty() {
                         continue;
                     }
@@ -1359,12 +1456,86 @@ impl Server {
             .and_then(sandbox_from)
             .or_else(|| p["sandboxPolicy"]["type"].as_str().and_then(sandbox_from))
             .unwrap_or(configured);
-        let auto = self.shared.yolo
-            || p["approvalPolicy"]
-                .as_str()
-                .or_else(|| settings.get("approval_policy").and_then(|v| v.as_str()))
-                == Some("never");
+        let auto = p["approvalPolicy"]
+            .as_str()
+            .map(|policy| policy == "never")
+            .unwrap_or_else(|| {
+                self.shared.yolo
+                    || settings.get("approval_policy").and_then(|v| v.as_str()) == Some("never")
+            });
         (sb, auto)
+    }
+
+    fn thread_permissions(
+        &self,
+        p: &Value,
+        saved: &Value,
+    ) -> std::result::Result<(Sandbox, bool, crate::guardian::Reviewer), (i64, String)> {
+        let mut settings = p.clone();
+        if let Some(value) = p.get("sandbox").filter(|value| !value.is_null()) {
+            if value.as_str().and_then(sandbox_from).is_none() {
+                return Err((-32602, "Invalid sandbox mode".into()));
+            }
+        }
+        if let Some(value) = p.get("sandboxPolicy").filter(|value| !value.is_null()) {
+            if value["type"].as_str().and_then(sandbox_from).is_none() {
+                return Err((-32602, "Invalid sandbox policy".into()));
+            }
+        }
+        if settings["sandbox"].is_null() && settings["sandboxPolicy"].is_null() {
+            if let Some(mode) = p.get("sandboxMode") {
+                if mode.as_str().and_then(sandbox_from).is_none() {
+                    return Err((-32602, "Invalid sandbox mode".into()));
+                }
+                settings["sandbox"] = mode.clone();
+            }
+        }
+        if settings["sandbox"].is_null()
+            && settings["sandboxPolicy"].is_null()
+            && !saved["sandboxMode"].is_null()
+        {
+            settings["sandbox"] = saved["sandboxMode"].clone();
+        }
+        if settings["approvalPolicy"].is_null() && !saved["approvalPolicy"].is_null() {
+            settings["approvalPolicy"] = saved["approvalPolicy"].clone();
+        }
+        if !settings["approvalPolicy"].is_null()
+            && !["never", "on-request"]
+                .iter()
+                .any(|policy| settings["approvalPolicy"] == *policy)
+        {
+            return Err((-32602, "Unsupported approval policy".into()));
+        }
+        let config = effective_config_table();
+        let reviewer = p
+            .get("approvalsReviewer")
+            .filter(|v| !v.is_null())
+            .or_else(|| saved.get("approvalsReviewer"))
+            .cloned()
+            .unwrap_or_else(|| {
+                json!(config
+                    .get("approvals_reviewer")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user"))
+            });
+        let reviewer = crate::guardian::Reviewer::parse(&reviewer).map_err(|_| {
+            (
+                -32602,
+                "approvalsReviewer must be user, guardian_subagent or auto_review".into(),
+            )
+        })?;
+        let (sandbox, auto) = self.params_policy(&settings);
+        Ok((sandbox, auto, reviewer))
+    }
+
+    fn save_thread_permissions(
+        &self,
+        id: &str,
+        sandbox: Sandbox,
+        auto: bool,
+        reviewer: crate::guardian::Reviewer,
+    ) -> RpcResult {
+        desktop::handle("desktop/threadMetadata/set",&json!({"threadId":id,"sandboxMode":match sandbox{Sandbox::ReadOnly=>"read-only",Sandbox::WorkspaceWrite=>"workspace-write",Sandbox::DangerFullAccess=>"danger-full-access"},"approvalPolicy":if auto{"never"}else{"on-request"},"approvalsReviewer":reviewer.name()})).unwrap().map_err(|e|(-32000,e))
     }
 
     fn handle<'a>(
@@ -1450,16 +1621,58 @@ impl Server {
                     return result.map_err(|error| (-32000, error));
                 }
             }
+            if let Some(result) = self.terminals.handle(method, &p).await {
+                return result.map_err(|e| (-32000, e));
+            }
+            if method.starts_with("workspace/environment/") {
+                let _gate = if [
+                    "workspace/environment/status",
+                    "workspace/environment/cancel",
+                ]
+                .contains(&method)
+                {
+                    None
+                } else {
+                    Some(self.workspace_gate.lock().await)
+                };
+                if method == "workspace/environment/run" && p["scriptType"] != "action" {
+                    let requested = PathBuf::from(p["cwd"].as_str().ok_or_else(|| err("cwd"))?)
+                        .canonicalize()
+                        .map_err(|e| (-32602, e.to_string()))?;
+                    if self.threads.lock().unwrap().values().any(|thread| {
+                        thread.is_active()
+                            && PathBuf::from(&thread.cwd)
+                                .canonicalize()
+                                .is_ok_and(|cwd| cwd == requested)
+                    }) {
+                        return Err((
+                            -32000,
+                            "Wait for the current response before setting up this environment"
+                                .into(),
+                        ));
+                    }
+                }
+                return self
+                    .local_environments
+                    .handle(method, &p)
+                    .await
+                    .unwrap()
+                    .map_err(|e| (-32000, e));
+            }
             if method.starts_with("workspace/") {
-                let mutation = method == "workspace/branch/switch"
+                let mutation = method == "workspace/worktree/create"
+                    || method == "workspace/branch/switch"
                     || (method == "workspace/branch/create" && p["switch"] != false)
-                    || method == "workspace/worktree/archive";
+                    || method == "workspace/worktree/archive"
+                    || method == "workspace/handoff/rollback";
                 let _gate = if mutation {
                     Some(self.workspace_gate.lock().await)
                 } else {
                     None
                 };
-                if mutation {
+                // Creating a separate checkout does not change the source's
+                // branch or files. Source responses can keep running.
+                if mutation && method != "workspace/worktree/create" {
                     let target = if method == "workspace/worktree/archive" {
                         let listing = workspaces::handle("workspace/worktree/list", &p)
                             .await
@@ -1477,25 +1690,129 @@ impl Server {
                             .map_err(|e| (-32000, e))?;
                         status["repoRoot"].as_str().map(PathBuf::from)
                     };
-                    if let Some(target) = target.and_then(|path| path.canonicalize().ok()) {
+                    let mut targets: Vec<PathBuf> = target
+                        .and_then(|path| path.canonicalize().ok())
+                        .into_iter()
+                        .collect();
+                    if method == "workspace/handoff/rollback" {
+                        let inspection = workspaces::handle("workspace/handoff/inspect", &p)
+                            .await
+                            .unwrap()
+                            .map_err(|e| (-32000, e))?;
+                        if let Some(operation) =
+                            inspection["pending"].as_array().and_then(|items| {
+                                items.iter().find(|item| item["id"] == p["operationId"])
+                            })
+                        {
+                            for key in ["sourcePath", "targetPath"] {
+                                if let Some(path) = operation[key]
+                                    .as_str()
+                                    .and_then(|p| PathBuf::from(p).canonicalize().ok())
+                                {
+                                    targets.push(path);
+                                }
+                            }
+                        }
+                    }
+                    if !targets.is_empty() {
                         let active = self.threads.lock().unwrap().values().any(|thread| {
                             thread.is_active()
-                                && PathBuf::from(&thread.cwd)
-                                    .canonicalize()
-                                    .is_ok_and(|path| path.starts_with(&target))
+                                && PathBuf::from(&thread.cwd).canonicalize().is_ok_and(|path| {
+                                    targets.iter().any(|target| path.starts_with(target))
+                                })
                         });
                         if active {
                             return Err((-32000,"Stop active responses in this checkout before changing its branch or archiving it".into()));
                         }
                     }
                 }
+                if method == "workspace/worktree/create"
+                    && p.get("localEnvironmentConfigPath")
+                        .is_some_and(|value| !value.is_null() && !value.is_string())
+                {
+                    return Err(err("localEnvironmentConfigPath must be a path or null"));
+                }
+                if method == "workspace/worktree/archive" {
+                    return workspaces::archive_with_environment(
+                        p,
+                        self.local_environments.clone(),
+                    )
+                    .await
+                    .map_err(|e| (-32000, e));
+                }
                 if let Some(result) = workspaces::handle(method, &p).await {
-                    return result.map_err(|error| (-32000, error));
+                    let mut result = result.map_err(|error| (-32000, error))?;
+                    if method == "workspace/worktree/create" {
+                        let source = PathBuf::from(p["cwd"].as_str().unwrap_or("."));
+                        let target = PathBuf::from(
+                            result["worktree"]["cwd"]
+                                .as_str()
+                                .ok_or_else(|| err("worktree directory"))?,
+                        );
+                        let selected = p["localEnvironmentConfigPath"].as_str().map(String::from);
+                        let source_copy = source.clone();
+                        let target_copy = target.clone();
+                        let selection = tokio::task::spawn_blocking(move || {
+                            crate::local_environments::prepare_worktree(
+                                &source_copy,
+                                &target_copy,
+                                selected.as_deref(),
+                            )
+                        })
+                        .await
+                        .map_err(|e| (-32000, e.to_string()))?;
+                        match selection {
+                            Ok(Some(selection)) => {
+                                let request = json!({"cwd":target,"configPath":selection["configPath"],"configSourceCwd":selection["configSourceCwd"],"sourceTreePath":source,"scriptType":"setup"});
+                                result["worktree"]["localEnvironmentConfigPath"] =
+                                    selection["configPath"].clone();
+                                match self
+                                    .local_environments
+                                    .handle("workspace/environment/run", &request)
+                                    .await
+                                    .unwrap()
+                                {
+                                    Ok(run) => result["setupRun"] = run["run"].clone(),
+                                    Err(error) => {
+                                        result["setupRun"] = self
+                                            .local_environments
+                                            .failed_setup(&target, &request, &error);
+                                        result["setupError"] = json!(error);
+                                    }
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let request = json!({"configPath":p["localEnvironmentConfigPath"],"configSourceCwd":source,"sourceTreePath":source});
+                                result["setupRun"] = self
+                                    .local_environments
+                                    .failed_setup(&target, &request, &error);
+                                result["setupError"] = json!(error);
+                            }
+                        }
+                    }
+                    return Ok(result);
                 }
             }
+            let _metadata_gate = if method == "desktop/threadMetadata/set" {
+                Some(self.workspace_gate.lock().await)
+            } else {
+                None
+            };
+            let _thread_access = if method == "desktop/threadMetadata/set" {
+                p["threadId"]
+                    .as_str()
+                    .map(thread_lifecycle::access)
+                    .transpose()
+                    .map_err(|e| (-32000, e))?
+            } else {
+                None
+            };
             if let Some(result) = desktop::handle(method, &p) {
                 return result.map_err(|e| (-32000, e));
             }
+            drop(_metadata_gate);
+            drop(_thread_access);
             if method.starts_with("thread/goal/") && method != "thread/goal/start" {
                 return self.handle_goal(method, p).await;
             }
@@ -1519,6 +1836,46 @@ impl Server {
                 return Ok(result);
             }
             match method {
+                "thread/approveGuardianDeniedAction" => {
+                    let id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
+                    let context = crate::guardian::manual_approval(&p["event"])
+                        .map_err(|e| (-32602, format!("invalid Guardian denial event: {e}")))?;
+                    let loaded = self.threads.lock().unwrap().contains_key(id);
+                    if !loaded {
+                        self.handle("thread/resume", json!({"threadId":id,"excludeTurns":true}))
+                            .await?;
+                    }
+                    let _gate = self.workspace_gate.lock().await;
+                    let _access = thread_lifecycle::access(id).map_err(|e| (-32000, e))?;
+                    let thread = self
+                        .threads
+                        .lock()
+                        .unwrap()
+                        .get(id)
+                        .cloned()
+                        .ok_or_else(|| err("unknown thread"))?;
+                    let _start = thread.start_lock.lock().await;
+                    let _context = thread.context_gate.lock().await;
+                    if thread.voice_call.lock().unwrap().is_some() {
+                        return Err((
+                            -32000,
+                            "End the voice conversation before approving a Guardian-denied action"
+                                .into(),
+                        ));
+                    }
+                    if let Some(context) = context {
+                        thread.pending_context.lock().unwrap().push(context);
+                        if !thread.is_active() {
+                            thread
+                                .agent
+                                .lock()
+                                .await
+                                .drain_context()
+                                .map_err(|e| (-32000, e.to_string()))?;
+                        }
+                    }
+                    Ok(json!({}))
+                }
                 "thread/goal/start" => {
                     p["objective"]
                         .as_str()
@@ -1548,7 +1905,19 @@ impl Server {
                     Ok(json!({"goal":result["goal"],"thread":thread}))
                 }
                 "turn/queue" | "turn/steer" => {
+                    let _gate = self.workspace_gate.lock().await;
                     let id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
+                    let metadata =
+                        desktop::handle("desktop/threadMetadata/read", &json!({"threadId":id}))
+                            .unwrap()
+                            .map_err(|e| (-32000, e))?;
+                    if metadata["metadata"]["archived"] == true {
+                        return Err((
+                            -32000,
+                            "This chat is archived; open an active chat before queueing a message"
+                                .into(),
+                        ));
+                    }
                     let thread = self
                         .threads
                         .lock()
@@ -1584,7 +1953,7 @@ impl Server {
                         .as_str()
                         .map(String::from)
                         .unwrap_or(self.shared.default_model.clone());
-                    let (sb, auto) = self.params_policy(&p);
+                    let (sb, auto, reviewer) = self.thread_permissions(&p, &json!({}))?;
                     let mode = p["mode"].as_str().unwrap_or("codex");
                     if !["chat", "work", "codex"].contains(&mode) {
                         return Err(err("invalid mode"));
@@ -1594,6 +1963,7 @@ impl Server {
                         Session::create(&cwd, &model).map_err(|e| (-32000, e.to_string()))?;
                     let id = session.id.clone();
                     if let Err(e) = desktop::handle("desktop/threadMetadata/set", &json!({"threadId":id,"mode":mode,"projectId":p["projectId"],"webSearchMode":search.as_str()})).unwrap() {session.delete();return Err((-32000,e));}
+                    self.save_thread_permissions(&id, sb, auto, reviewer)?;
                     let agent = self
                         .make_agent(session, vec![], &model, &cwd, sb, auto)
                         .await
@@ -1612,17 +1982,27 @@ impl Server {
                     );
                     self.notify("thread/started", json!({"thread": thread}));
                     Ok(
-                        json!({"approvalPolicy": if auto { "never" } else { "on-request" }, "approvalsReviewer": "user", "cwd": cwd, "model": model,
+                        json!({"approvalPolicy": if auto { "never" } else { "on-request" }, "approvalsReviewer": reviewer.name(), "cwd": cwd, "model": model,
                     "modelProvider": "openai", "sandbox": sandbox_policy(sb, &cwd), "thread": thread}),
                     )
                 }
                 "thread/resume" => {
+                    let _gate = self.workspace_gate.lock().await;
                     let id = p["threadId"]
                         .as_str()
                         .ok_or_else(|| err("threadId"))?
                         .to_string();
                     let (session, items, meta) =
                         Session::open(Some(&id)).map_err(|e| (-32000, e.to_string()))?;
+                    let _access = thread_lifecycle::access(&session.id).map_err(|e| (-32000, e))?;
+                    let saved = desktop::handle(
+                        "desktop/threadMetadata/read",
+                        &json!({"threadId":session.id}),
+                    )
+                    .unwrap()
+                    .map_err(|e| (-32000, e))?;
+                    let (sb, auto, reviewer) = self.thread_permissions(&p, &saved["metadata"])?;
+                    self.save_thread_permissions(&session.id, sb, auto, reviewer)?;
                     let cwd = p["cwd"]
                         .as_str()
                         .or(meta["cwd"].as_str())
@@ -1633,7 +2013,6 @@ impl Server {
                         .or(meta["model"].as_str())
                         .unwrap_or(&self.shared.default_model)
                         .to_string();
-                    let (sb, auto) = self.params_policy(&p);
                     let read_only = session.is_read_only();
                     let created = meta["created_ms"].as_u64().unwrap_or(0);
                     let name = meta["name"].as_str().map(String::from);
@@ -1649,10 +2028,22 @@ impl Server {
                         recovered
                     };
                     if loaded.is_none() {
-                        let agent = self
+                        let mut agent = self
                             .make_agent(session, items, &model, &cwd, sb, auto)
                             .await
                             .map_err(|e| (-32000, e.to_string()))?;
+                        if let Some(Ok(saved)) =
+                            desktop::handle("desktop/threadMetadata/read", &json!({"threadId":sid}))
+                        {
+                            if let Some(effort) = saved["metadata"]["reasoningEffort"]
+                                .as_str()
+                                .filter(|effort| {
+                                    *effort == "auto" || models::EFFORTS.contains(effort)
+                                })
+                            {
+                                agent.reasoning_effort = effort.to_string();
+                            }
+                        }
                         self.register(&sid, agent, &cwd, created);
                     }
                     let mut thread = self.thread_json(
@@ -1668,7 +2059,7 @@ impl Server {
                     );
                     thread["readOnly"] = json!(read_only);
                     Ok(
-                        json!({"approvalPolicy": if auto { "never" } else { "on-request" }, "approvalsReviewer": "user", "cwd": cwd, "model": model,
+                        json!({"approvalPolicy": if auto { "never" } else { "on-request" }, "approvalsReviewer": reviewer.name(), "cwd": cwd, "model": model,
                     "modelProvider": "openai", "sandbox": sandbox_policy(sb, &cwd), "thread": thread}),
                     )
                 }
@@ -1759,6 +2150,7 @@ impl Server {
                     let id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
                     let name = p["name"].as_str().ok_or_else(|| err("name"))?;
                     let (s, _, _) = Session::open(Some(id)).map_err(|e| (-32000, e.to_string()))?;
+                    let _access = thread_lifecycle::access(&s.id).map_err(|e| (-32000, e))?;
                     s.try_set_name(name).map_err(|e| (-32000, e.to_string()))?;
                     self.notify(
                         "thread/name/updated",
@@ -1767,10 +2159,12 @@ impl Server {
                     Ok(json!({}))
                 }
                 "thread/archive" | "thread/unarchive" | "thread/delete" => {
+                    let _gate = self.workspace_gate.lock().await;
                     let requested_id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
                     let (s, _, _) =
                         Session::open(Some(requested_id)).map_err(|e| (-32000, e.to_string()))?;
                     let id = s.id.clone();
+                    let _exclusive = thread_lifecycle::exclusive(&id).map_err(|e| (-32000, e))?;
                     let loaded = self.threads.lock().unwrap().get(&id).cloned();
                     let _start = match loaded.as_ref() {
                         Some(thread) => Some(thread.start_lock.lock().await),
@@ -1780,6 +2174,7 @@ impl Server {
                     if running {
                         return Err((-32000, "Stop the running turn first".into()));
                     }
+                    let _execution = thread_lifecycle::execution(&id).map_err(|e| (-32000, e))?;
                     if method == "thread/delete" {
                         if s.is_read_only() {
                             return Err((-32000,"Imported sessions are read-only. Archive to hide this conversation.".into()));
@@ -1797,6 +2192,18 @@ impl Server {
                         "thread/unarchive" => s.restore().map_err(|e| (-32000, e.to_string()))?,
                         _ => unreachable!(),
                     }
+                    if method == "thread/archive" {
+                        self.threads.lock().unwrap().remove(&id);
+                        let removed = scheduler::delete_archived_heartbeats(&id).map_err(|e| {
+                            (
+                                -32000,
+                                format!("Chat archived; heartbeat cleanup needs attention: {e}"),
+                            )
+                        })?;
+                        if !removed.is_empty() {
+                            self.notify("scheduler/changed", json!({}));
+                        }
+                    }
                     desktop::handle(
                         "desktop/threadMetadata/set",
                         &json!({"threadId":id,"archived":method=="thread/archive"}),
@@ -1806,62 +2213,43 @@ impl Server {
                     self.notify("thread/archived", json!({"threadId":id}));
                     Ok(json!({}))
                 }
-                "thread/fork" => {
-                    let id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
-                    let (_, mut items, meta) =
-                        Session::open(Some(id)).map_err(|e| (-32000, e.to_string()))?;
-                    if let Some(index) = p["beforeUserMessage"].as_u64() {
-                        let end = visible_user_message_index(&items, index)
-                            .ok_or_else(|| err("message index"))?;
-                        items.truncate(end);
+                "thread/fork" => self.fork_thread(p).await,
+                "thread/settings/update" => {
+                    if p.as_object().is_none_or(|fields| {
+                        fields.keys().any(|key| {
+                            ![
+                                "threadId",
+                                "approvalsReviewer",
+                                "approvalPolicy",
+                                "sandbox",
+                                "sandboxPolicy",
+                                "sandboxMode",
+                            ]
+                            .contains(&key.as_str())
+                        })
+                    }) {
+                        return Err(err("Unsupported thread setting"));
                     }
-                    let cwd = meta["cwd"].as_str().unwrap_or(".");
-                    let model = meta["model"].as_str().unwrap_or(&self.shared.default_model);
-                    let session =
-                        Session::create(cwd, model).map_err(|e| (-32000, e.to_string()))?;
-                    for item in &items {
-                        session.append(item);
-                    }
-                    for (position, snapshot) in
-                        meta["_mcodex_ui_turns"].as_object().into_iter().flatten()
-                    {
-                        if let Ok(position) = position.parse::<usize>() {
-                            if position < items.len() {
-                                session
-                                    .append_ui_snapshot(position, snapshot)
-                                    .map_err(|error| (-32000, error.to_string()))?;
-                            }
-                        }
-                    }
-                    let sid = session.id.clone();
-                    let old_meta =
-                        desktop::handle("desktop/threadMetadata/read", &json!({"threadId":id}))
-                            .unwrap()
-                            .map_err(|e| (-32000, e))?;
-                    let mode = old_meta["metadata"]["mode"].as_str().unwrap_or("codex");
-                    let search = saved_search_preference(&old_meta["metadata"])
-                        .map_err(|error| (-32000, error))?;
-                    desktop::handle("desktop/threadMetadata/set", &json!({"threadId":sid,"mode":mode,"projectId":old_meta["metadata"]["projectId"],"webSearchMode":search.as_str()})).unwrap().map_err(|e| (-32000,e))?;
-                    let (sb, auto) = self.params_policy(&p);
-                    let agent = self
-                        .make_agent(session, items.clone(), model, cwd, sb, auto)
-                        .await
-                        .map_err(|e| (-32000, e.to_string()))?;
-                    self.register(&sid, agent, cwd, now_ms());
-                    let thread = self.thread_json(
-                        &sid,
-                        None,
-                        "",
-                        cwd,
-                        model,
-                        now_ms(),
-                        now_ms(),
-                        false,
-                        history_to_turns_with_ui(&items, cwd, &meta),
-                    );
-                    self.notify("thread/started", json!({"thread":thread}));
-                    Ok(json!({"thread":thread,"cwd":cwd}))
+                    let _gate = self.workspace_gate.lock().await;
+                    let (session, _, meta) =
+                        Session::open(Some(p["threadId"].as_str().ok_or_else(|| err("threadId"))?))
+                            .map_err(|e| (-32000, e.to_string()))?;
+                    let _access = thread_lifecycle::access(&session.id).map_err(|e| (-32000, e))?;
+                    let saved = desktop::handle(
+                        "desktop/threadMetadata/read",
+                        &json!({"threadId":session.id}),
+                    )
+                    .unwrap()
+                    .map_err(|e| (-32000, e))?;
+                    let (sandbox, auto, reviewer) =
+                        self.thread_permissions(&p, &saved["metadata"])?;
+                    self.save_thread_permissions(&session.id, sandbox, auto, reviewer)?;
+                    self.notify("thread/settings/updated",json!({"threadId":session.id,"approvalsReviewer":reviewer.name(),"approvalPolicy":if auto{"never"}else{"on-request"},"sandbox":sandbox_policy(sandbox,meta["cwd"].as_str().unwrap_or("."))}));
+                    Ok(json!({}))
                 }
+                "thread/handoff" => self.handoff_thread(p).await,
+                "thread/handoff/inspect" => self.inspect_handoff_thread(p).await,
+                "thread/handoff/status" => self.handoff_thread_status(p).await,
                 "thread/webSearch/set" => {
                     let id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
                     let mut fields = json!({});
@@ -1962,7 +2350,7 @@ impl Server {
                         .get("model_reasoning_effort")
                         .and_then(|v| v.as_str())
                         .map(String::from)
-                        .unwrap_or_else(||models::default_effort(&cfg_model));
+                        .unwrap_or_else(|| models::default_effort(&cfg_model));
                     let service_tier = tbl
                         .get("service_tier")
                         .and_then(|v| v.as_str())
@@ -2241,11 +2629,55 @@ impl Server {
                     }))
                 }
                 "settings/write" => {
-                    if let Some(model)=p["model"].as_str(){if let Some(metadata)=self.models.metadata(model).await {if let Some(effort)=p["reasoningEffort"].as_str().filter(|effort|*effort!="auto"){if metadata["reasoningMetadataKnown"]==true&&!metadata["supportedReasoningEfforts"].as_array().is_some_and(|options|options.iter().any(|option|option["reasoningEffort"]==effort)){return Err((-32602,"Reasoning effort is not supported by the selected model".into()));}}}}
+                    if let Some(model) = p["model"].as_str() {
+                        if let Some(metadata) = self.models.metadata(model).await {
+                            if let Some(effort) = p["reasoningEffort"]
+                                .as_str()
+                                .filter(|effort| *effort != "auto")
+                            {
+                                if metadata["reasoningMetadataKnown"] == true
+                                    && !metadata["supportedReasoningEfforts"]
+                                        .as_array()
+                                        .is_some_and(|options| {
+                                            options
+                                                .iter()
+                                                .any(|option| option["reasoningEffort"] == effort)
+                                        })
+                                {
+                                    return Err((
+                                        -32602,
+                                        "Reasoning effort is not supported by the selected model"
+                                            .into(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     let mut tbl = read_codex_config_table();
-                    if p["inheritModelDefaults"]==true {tbl=std::fs::read_to_string(codex_config_path()).ok().and_then(|text|text.parse().ok()).unwrap_or_default();for key in ["model","model_reasoning_effort","service_tier"]{tbl.remove(key);}}
-                    if let Some(value)=p.get("reasoningEffort"){if value.as_str().is_none_or(|effort|effort!="auto"&&!models::EFFORTS.contains(&effort)){return Err((-32602,"Invalid reasoning effort".into()));}}
-                    if let Some(value)=p.get("serviceTier"){if value.as_str().is_none_or(|tier|!["auto","default","fast","priority","flex","ultrafast"].contains(&tier)){return Err((-32602,"Invalid service tier".into()));}}
+                    if p["inheritModelDefaults"] == true {
+                        tbl = std::fs::read_to_string(codex_config_path())
+                            .ok()
+                            .and_then(|text| text.parse().ok())
+                            .unwrap_or_default();
+                        for key in ["model", "model_reasoning_effort", "service_tier"] {
+                            tbl.remove(key);
+                        }
+                    }
+                    if let Some(value) = p.get("reasoningEffort") {
+                        if value.as_str().is_none_or(|effort| {
+                            effort != "auto" && !models::EFFORTS.contains(&effort)
+                        }) {
+                            return Err((-32602, "Invalid reasoning effort".into()));
+                        }
+                    }
+                    if let Some(value) = p.get("serviceTier") {
+                        if value.as_str().is_none_or(|tier| {
+                            !["auto", "default", "fast", "priority", "flex", "ultrafast"]
+                                .contains(&tier)
+                        }) {
+                            return Err((-32602, "Invalid service tier".into()));
+                        }
+                    }
                     if let Some(m) = p["model"].as_str() {
                         tbl.insert("model".into(), toml::Value::String(m.into()));
                     }
@@ -2256,13 +2688,28 @@ impl Server {
                         );
                     }
                     if let Some(st) = p["serviceTier"].as_str() {
-                        if let Some(tier)=models::normalize_tier(st){tbl.insert("service_tier".into(), toml::Value::String(tier));}else{tbl.insert("service_tier".into(),toml::Value::String("default".into()));}
+                        if let Some(tier) = models::normalize_tier(st) {
+                            tbl.insert("service_tier".into(), toml::Value::String(tier));
+                        } else {
+                            tbl.insert(
+                                "service_tier".into(),
+                                toml::Value::String("default".into()),
+                            );
+                        }
                     }
                     if let Some(sb) = p["sandboxMode"].as_str() {
                         tbl.insert("sandbox_mode".into(), toml::Value::String(sb.into()));
                     }
                     if let Some(ap) = p["approvalPolicy"].as_str() {
                         tbl.insert("approval_policy".into(), toml::Value::String(ap.into()));
+                    }
+                    if let Some(value) = p.get("approvalsReviewer") {
+                        let reviewer = crate::guardian::Reviewer::parse(value)
+                            .map_err(|_| err("Invalid approvalsReviewer"))?;
+                        tbl.insert(
+                            "approvals_reviewer".into(),
+                            toml::Value::String(reviewer.name().into()),
+                        );
                     }
                     if let Some(desktop_updates) = p["desktop"].as_object() {
                         let desk = tbl
@@ -2504,6 +2951,8 @@ impl Server {
                         mcp: self.shared.mcp.clone(),
                         plugins: vec![],
                         session_allow: Default::default(),
+                        patch_grants: Default::default(),
+                        rules_home: None,
                     };
                     let output = crate::tools::exec(
                         &["/bin/sh".into(), "-lc".into(), cmd.into()],
@@ -2550,25 +2999,55 @@ impl Server {
             .cloned()
             .ok_or_else(|| bad("thread not loaded; call thread/start or thread/resume"))?;
         let _start = t.start_lock.lock().await;
+        let _access = thread_lifecycle::access(&tid).map_err(|e| (-32000, e))?;
         if t.is_active() {
             return Err((-32000, "a turn is already running".into()));
         }
+        let execution = thread_lifecycle::execution(&tid).map_err(|e| (-32000, e))?;
+        let checkout_execution = workspaces::execution_lease(&t.cwd)
+            .await
+            .map_err(|e| (-32000, e))?;
         if p["goalContinuation"].as_bool() == Some(true)
             && !t.queued_inputs.lock().unwrap().is_empty()
         {
             return Err((-32000, "A user message is queued".into()));
         }
-        let chosen_model=match p["model"].as_str(){Some(model)=>model.to_owned(),None=>t.agent.lock().await.model.clone()};
-        let model_metadata=self.models.metadata(&chosen_model).await;
-        if let Some(effort)=p["reasoningEffort"].as_str().or_else(||p["effort"].as_str()) {
-            if effort!="auto"&&!models::EFFORTS.contains(&effort){return Err(bad("Invalid reasoning effort"));}
-            if let Some(metadata)=model_metadata.as_ref().filter(|metadata|metadata["reasoningMetadataKnown"]==true) {
-                if effort!="auto"&&!metadata["supportedReasoningEfforts"].as_array().is_some_and(|options|options.iter().any(|option|option["reasoningEffort"]==effort)){return Err(bad("Reasoning effort is not supported by the selected model"));}
+        let chosen_model = match p["model"].as_str() {
+            Some(model) => model.to_owned(),
+            None => t.agent.lock().await.model.clone(),
+        };
+        let model_metadata = self.models.metadata(&chosen_model).await;
+        if let Some(effort) = p["reasoningEffort"]
+            .as_str()
+            .or_else(|| p["effort"].as_str())
+        {
+            if effort != "auto" && !models::EFFORTS.contains(&effort) {
+                return Err(bad("Invalid reasoning effort"));
+            }
+            if let Some(metadata) = model_metadata
+                .as_ref()
+                .filter(|metadata| metadata["reasoningMetadataKnown"] == true)
+            {
+                if effort != "auto"
+                    && !metadata["supportedReasoningEfforts"]
+                        .as_array()
+                        .is_some_and(|options| {
+                            options
+                                .iter()
+                                .any(|option| option["reasoningEffort"] == effort)
+                        })
+                {
+                    return Err(bad(
+                        "Reasoning effort is not supported by the selected model",
+                    ));
+                }
             }
         }
         let initial_meta = desktop::handle("desktop/threadMetadata/read", &json!({"threadId":tid}))
             .unwrap()
             .map_err(|error| (-32000, error))?;
+        let (turn_sandbox, turn_auto, turn_reviewer) =
+            self.thread_permissions(&p, &initial_meta["metadata"])?;
         let search_version = explicit_search_version.unwrap_or_else(|| {
             initial_meta["metadata"]["webSearchVersion"]
                 .as_u64()
@@ -2576,6 +3055,7 @@ impl Server {
         });
         let mut text = String::new();
         let mut display_text = String::new();
+        let mut workspace_files = Vec::new();
         let mut imported_attachments = Vec::new();
         let mut materialized_bytes = 0usize;
         let mut content = Vec::new();
@@ -2606,6 +3086,7 @@ impl Server {
                     text.push_str(&format!(
                         "\n\n<workspace_file path={path:?}>\n{body}\n</workspace_file>"
                     ));
+                    workspace_files.push(json!({"path":path,"name":PathBuf::from(path).file_name().map(|name|name.to_string_lossy().to_string()).unwrap_or_else(||path.to_string())}));
                 }
                 Some("skill") => text.push_str(&format!(
                     "\n[{}: {}]",
@@ -2685,7 +3166,7 @@ impl Server {
         if content.is_empty() {
             return Err(bad("input is empty"));
         }
-        let mut presentation = json!({"text":if imported_attachments.is_empty(){&text}else{&display_text},"attachments":imported_attachments});
+        let mut presentation = json!({"text":if imported_attachments.is_empty()&&workspace_files.is_empty(){&text}else{&display_text},"attachments":imported_attachments,"workspaceFiles":workspace_files});
         let history_len;
         {
             let mut a = t.agent.lock().await;
@@ -2748,21 +3229,25 @@ impl Server {
             if let Some(m) = p["model"].as_str() {
                 a.model = m.into();
             }
-            if let Some(tier)=p.get("serviceTier"){if !tier.is_null()&&!tier.is_string(){return Err((-32602,"serviceTier must be a string or null".into()));}a.client.service_tier=tier.as_str().and_then(models::normalize_tier);}
+            if let Some(tier) = p.get("serviceTier") {
+                if !tier.is_null() && !tier.is_string() {
+                    return Err((-32602, "serviceTier must be a string or null".into()));
+                }
+                a.client.service_tier = tier.as_str().and_then(models::normalize_tier);
+            }
             if let Some(eff) = p["reasoningEffort"]
                 .as_str()
                 .or_else(|| p["effort"].as_str())
             {
                 a.reasoning_effort = eff.into();
             }
-            if let Some(metadata)=model_metadata.as_ref(){a.reasoning_effort=models::resolve_effort(metadata,&a.reasoning_effort);}
-            let (sb, auto) = self.params_policy(&p);
-            if p.get("sandboxPolicy").is_some() {
-                a.ctx.sandbox = sb;
+            if let Some(metadata) = model_metadata.as_ref() {
+                a.reasoning_effort = models::resolve_effort(metadata, &a.reasoning_effort);
             }
-            if p["approvalPolicy"].is_string() {
-                a.ctx.auto_approve = auto;
-            }
+            a.ctx.sandbox = turn_sandbox;
+            a.ctx.auto_approve = turn_auto;
+            a.approvals_reviewer = turn_reviewer;
+            self.save_thread_permissions(&tid, turn_sandbox, turn_auto, turn_reviewer)?;
             *t.sandbox.lock().unwrap() = a.ctx.sandbox;
             let preferred = match requested_web_search {
                 Some(mode) => mode,
@@ -2836,7 +3321,7 @@ impl Server {
             .cloned()
             .collect::<Vec<_>>();
         visible_attachments.extend(imported_attachments);
-        let user_item = json!({"type": "userMessage", "id": self.new_id("item"), "internal":internal, "content": [{"type": "text", "text": presentation["text"].as_str().unwrap_or(&text), "text_elements": []}], "attachments":visible_attachments,"webSearchMode":presentation["webSearchMode"],"effectiveWebSearchMode":presentation["effectiveWebSearchMode"],"webSearch":presentation["webSearch"]});
+        let user_item = json!({"type": "userMessage", "id": self.new_id("item"), "internal":internal, "content": [{"type": "text", "text": presentation["text"].as_str().unwrap_or(&text), "text_elements": []}], "attachments":visible_attachments,"workspaceFiles":presentation["workspaceFiles"],"webSearchMode":presentation["webSearchMode"],"effectiveWebSearchMode":presentation["effectiveWebSearchMode"],"webSearch":presentation["webSearch"]});
         self.notify(
             "item/started",
             json!({"item": user_item, "startedAtMs": started, "threadId": tid, "turnId": turn_id}),
@@ -2863,9 +3348,12 @@ impl Server {
             t.interrupted.clone(),
         );
         tokio::spawn(async move {
+            let _execution = execution;
+            let _checkout_execution = checkout_execution;
             let mut open_msg: Option<(String, String)> = None;
             let mut open_reasoning: Option<(String, String, u64)> = None;
             let mut items: HashMap<String, (Value, u64)> = HashMap::new();
+            let mut execution_starts: HashMap<String, u64> = HashMap::new();
             let mut messages: HashMap<String, (String, String, u64)> = HashMap::new();
             let mut completed_messages = std::collections::HashSet::new();
             let mut searches: HashMap<String, (Value, u64)> = HashMap::new();
@@ -3065,7 +3553,6 @@ impl Server {
                         srv.notify("item/agentMessage/delta", params);
                     }
                     Event::ToolStart { id, name, args } => {
-                        had_work_tools = true;
                         close_reasoning(&srv, &mut open_reasoning);
                         close_msg(&srv, &mut open_msg, &mut messages);
                         let now = now_ms();
@@ -3073,16 +3560,19 @@ impl Server {
                         srv.notify("item/started", json!({"item": item, "startedAtMs": now, "threadId": tid2, "turnId": turn_id2}));
                         items.insert(id, (item, now));
                     }
-                    Event::ToolEnd { id, output } => {
-                        if let Some((mut item, started_at)) = items.remove(&id) {
+                    Event::ToolEnd { id, output, denied } => {
+                        had_work_tools |= !denied;
+                        if let Some((mut item, _)) = items.remove(&id) {
                             let now = now_ms();
-                            item["durationMs"] = json!(now.saturating_sub(started_at));
+                            item["durationMs"] = json!(execution_starts
+                                .remove(&id)
+                                .map(|started| now.saturating_sub(started)));
                             if item["type"] == "commandExecution" {
                                 let mut params = ids(&id);
                                 params["delta"] = json!(output);
                                 srv.notify("item/commandExecution/outputDelta", params);
                             }
-                            finish_tool_item(&mut item, &output);
+                            finish_tool_item(&mut item, &output, denied);
                             srv.notify("item/completed", json!({"item": item, "completedAtMs": now, "threadId": tid2, "turnId": turn_id2}));
                         }
                     }
@@ -3090,16 +3580,28 @@ impl Server {
                         id,
                         name,
                         what,
+                        cwd: approval_cwd,
+                        reason,
+                        allow_session,
+                        files,
+                        proposed_rule,
                         reply,
                     } => {
+                        let available_decisions = if allow_session {
+                            json!(["accept", "acceptForSession", "decline", "cancel"])
+                        } else if let Some(prefix) = proposed_rule.as_ref() {
+                            json!(["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":prefix}},"cancel"])
+                        } else {
+                            json!(["accept", "cancel"])
+                        };
                         let (method, params) = match name.as_str() {
                             "apply_patch" => (
                                 "item/fileChange/requestApproval",
-                                json!({"itemId": id, "threadId": tid2, "turnId": turn_id2, "reason": null, "startedAtMs": now_ms()}),
+                                json!({"itemId": id, "threadId": tid2, "turnId": turn_id2, "cwd":approval_cwd,"files":files,"reason":reason,"availableDecisions":if allow_session{json!(["accept","acceptForSession","decline","cancel"])}else{json!(["accept","cancel"])},"startedAtMs": now_ms()}),
                             ),
                             _ => (
                                 "item/commandExecution/requestApproval",
-                                json!({"itemId": id, "threadId": tid2, "turnId": turn_id2, "command": what, "cwd": cwd, "startedAtMs": now_ms()}),
+                                json!({"kind":"command","itemId": id, "threadId": tid2, "turnId": turn_id2, "command": what, "cwd": approval_cwd,"reason":reason,"proposedExecpolicyAmendment":proposed_rule,"availableDecisions":available_decisions,"startedAtMs": now_ms()}),
                             ),
                         };
                         let srv2 = srv.clone();
@@ -3108,11 +3610,16 @@ impl Server {
                             let resp = srv2.request(method, params, approval_interrupted).await;
                             let v = match resp["decision"].as_str() {
                                 Some("accept") => Verdict::Yes,
-                                Some("acceptForSession") => Verdict::Always,
+                                Some("acceptForSession") if allow_session => Verdict::Always,
+                                Some("cancel") => Verdict::Cancel,
+                                _ if proposed_rule.as_ref().is_some_and(|prefix|resp["decision"]==json!({"acceptWithExecpolicyAmendment":{"execpolicy_amendment":prefix}}))=>Verdict::SaveRule,
                                 _ => Verdict::No,
                             };
                             let _ = reply.send(v);
                         });
+                    }
+                    Event::ToolExecuting { id } => {
+                        execution_starts.insert(id, now_ms());
                     }
                     Event::Usage { tokens } => {
                         if let Some(tokens) = tokens {
@@ -3131,6 +3638,23 @@ impl Server {
                         }
                     }
                     Event::TaskReport(report) => task_report = Some(report),
+                    Event::TurnCancelled => {
+                        interrupted.store(true, Ordering::SeqCst);
+                    }
+                    Event::Warning(message) => srv.notify(
+                        "configWarning",
+                        json!({"threadId":tid2,"summary":message,"details":null}),
+                    ),
+                    Event::ApprovalReview(mut review) => {
+                        review["threadId"] = json!(tid2);
+                        review["turnId"] = json!(turn_id2);
+                        let method = if review.get("completedAtMs").is_some() {
+                            "item/autoApprovalReview/completed"
+                        } else {
+                            "item/autoApprovalReview/started"
+                        };
+                        srv.notify(method, review);
+                    }
                     Event::Done => {}
                     Event::Error(e) => error = Some(e),
                 }
@@ -3167,14 +3691,27 @@ impl Server {
                     srv.notify("item/completed",json!({"item":item,"threadId":tid2,"turnId":turn_id2,"startedAtMs":started_at,"completedAtMs":now_ms()}));
                 }
             }
-            for (mut item, started_at) in items.into_values() {
+            for (id, (mut item, started_at)) in items {
                 item["status"] = json!(if interrupted.load(Ordering::SeqCst) {
                     "interrupted"
                 } else {
                     "failed"
                 });
-                item["durationMs"] = json!(now_ms().saturating_sub(started_at));
+                item["durationMs"] = json!(execution_starts
+                    .get(&id)
+                    .map(|started| now_ms().saturating_sub(*started)));
                 srv.notify("item/completed",json!({"item":item,"threadId":tid2,"turnId":turn_id2,"startedAtMs":started_at,"completedAtMs":now_ms()}));
+            }
+            let finished_thread = srv.threads.lock().unwrap().get(&tid2).cloned();
+            let _finish_gate = if let Some(thread) = finished_thread.as_ref() {
+                Some(thread.context_gate.lock().await)
+            } else {
+                None
+            };
+            if let Some(thread) = finished_thread.as_ref() {
+                if let Err(error) = thread.agent.lock().await.drain_context() {
+                    srv.notify("guardianWarning",json!({"threadId":tid2,"message":format!("Could not save the manual action approval: {error}")}));
+                }
             }
             let ended = now_ms();
             let was_interrupted = interrupted.load(Ordering::SeqCst);
@@ -3197,7 +3734,19 @@ impl Server {
             if let Some(report) = task_report {
                 t["taskReport"] = report;
             }
-            if matches!(t["status"].as_str(), Some("failed" | "interrupted")) {
+            let reviewed = srv
+                .threads
+                .lock()
+                .unwrap()
+                .get(&tid2)
+                .is_some_and(|thread| {
+                    thread.live.lock().unwrap().as_ref().is_some_and(|live| {
+                        live.turn["items"].as_array().is_some_and(|items| {
+                            items.iter().any(|item| !item["approvalReview"].is_null())
+                        })
+                    })
+                });
+            if reviewed || matches!(t["status"].as_str(), Some("failed" | "interrupted")) {
                 let thread = srv.threads.lock().unwrap().get(&tid2).cloned();
                 if let Some(thread) = thread {
                     let mut snapshot = thread
@@ -3220,7 +3769,7 @@ impl Server {
                         .append_ui_snapshot(history_len, &snapshot);
                     if let Err(save_error) = saved {
                         t["uiPersistenceError"] = json!(save_error.to_string());
-                        srv.notify("error",json!({"error":{"message":"This interrupted response could not be saved. Keep this window open to retain its details."},"threadId":tid2,"turnId":turn_id2,"willRetry":false}));
+                        srv.notify("error",json!({"error":{"message":"This response's display details could not be saved. Keep this window open to retain them."},"threadId":tid2,"turnId":turn_id2,"willRetry":false}));
                     }
                 }
             }
@@ -3365,7 +3914,9 @@ pub(crate) async fn run_channel_until(
         remote,
         images,
         document_ai,
-        models: models::Catalog::default(),
+        local_environments: crate::local_environments::Environments::new(out.clone()),
+        terminals: crate::terminal::Terminals::new(out.clone()),
+        models: Arc::new(models::Catalog::default()),
         out,
         shared,
         threads: Default::default(),
@@ -3374,6 +3925,7 @@ pub(crate) async fn run_channel_until(
         scheduled_jobs: Default::default(),
         automation_error: Default::default(),
         workspace_gate: Default::default(),
+        active_handoffs: Default::default(),
         account,
         voice: voice::Voice::new(),
         voice_bindings: Default::default(),
@@ -3433,6 +3985,8 @@ pub(crate) async fn run_channel_until(
         srv.document_ai.close(),
         srv.images.close(),
         srv.remote.shutdown(),
+        srv.local_environments.shutdown(),
+        srv.terminals.shutdown(),
         srv.account.shutdown(),
         srv.stop_all_voice()
     );
@@ -3504,7 +4058,9 @@ mod tests {
                 remote,
                 images,
                 document_ai,
-                models: models::Catalog::default(),
+                local_environments: crate::local_environments::Environments::new(out.clone()),
+                terminals: crate::terminal::Terminals::new(out.clone()),
+                models: Arc::new(models::Catalog::default()),
                 out,
                 shared: Shared {
                     cfg: config::Config::default(),
@@ -3520,12 +4076,48 @@ mod tests {
                 scheduled_jobs: Default::default(),
                 automation_error: Default::default(),
                 workspace_gate: Default::default(),
+                active_handoffs: Default::default(),
                 account,
                 voice: voice::Voice::new(),
                 voice_bindings: Default::default(),
             }),
             rx,
         )
+    }
+
+    #[test]
+    fn an_explicit_approval_policy_overrides_the_server_startup_default() {
+        let (mut server, _) = server();
+        Arc::get_mut(&mut server).unwrap().shared.yolo = true;
+        assert!(server.params_policy(&json!({})).1);
+        assert!(
+            !server
+                .params_policy(&json!({"approvalPolicy":"on-request"}))
+                .1
+        );
+        assert!(server.params_policy(&json!({"approvalPolicy":"never"})).1);
+    }
+
+    #[test]
+    fn approval_verdicts_do_not_come_from_command_or_connector_output_text() {
+        let mut command = json!({"type":"commandExecution"});
+        finish_tool_item(
+            &mut command,
+            "exit code: 0\ndenied and rejected by user",
+            false,
+        );
+        assert_eq!(command["status"], "completed");
+        let mut connector = json!({"type":"mcpToolCall"});
+        finish_tool_item(
+            &mut connector,
+            "{\"denied\":false,\"message\":\"rejected by user appears in this document\"}",
+            false,
+        );
+        assert_eq!(connector["status"], "completed");
+        finish_tool_item(&mut command, "The action was not approved", true);
+        assert_eq!(command["status"], "declined");
+        finish_tool_item(&mut connector, "The action was not approved", true);
+        assert_eq!(connector["status"], "failed");
     }
 
     #[test]

@@ -39,8 +39,8 @@ const filesBaseSend=sendTurn;
 sendTurn=async function(){
   if(filesUi.importing)return;
   if(desktopAttachments.some(file=>file.attachmentId&&file.parseStatus!=='ready')){showError(new Error('Remove unreadable files before sending. Their originals remain in Library.'));return;}
-  const key=fileDraftKey(),ticket=desktop.navigation,hadFiles=desktopAttachments.some(file=>file.attachmentId);
-  try{await filesBaseSend();if(hadFiles&&ticket===desktop.navigation&&!desktopAttachments.length){filesUi.drafts.delete(key);filesUi.drafts.delete(currentThread);await savePreferences({});}}
+  const key=fileDraftKey(),ticket=desktop.navigation,hadContext=desktopAttachments.some(file=>file.attachmentId)||mentionedFiles.length>0;
+  try{await filesBaseSend();if(hadContext&&ticket===desktop.navigation&&!desktopAttachments.length&&!mentionedFiles.length){for(const map of [filesUi.drafts,filesUi.mentions]){map.delete(key);map.delete(currentThread);}await savePreferences({});}}
   catch(error){fileDraftMaps();if(ticket===desktop.navigation)saveDraft();throw error;}
 };
 const filesBaseRetry=retryLastTurn;
@@ -94,6 +94,7 @@ showLibrary=async function(...args){filesUi.library=false;await filesBaseLibrary
 const filesBaseTimeline=upsertTimelineItem;
 upsertTimelineItem=function(item){filesBaseTimeline(item);if(item.type!=='userMessage'||item.internal)return;const bubble=itemEls.get(item.id)?.querySelector('.msg-user-bubble');if(!bubble)return;
   for(const file of item.attachments||[]){if(!file.id||bubble.querySelector(`[data-attachment-id="${CSS.escape(file.id)}"]`))continue;const card=fileAction(file.name,()=>openAttachment(file.id),'message-file-card');card.dataset.attachmentId=file.id;bubble.append(card);}
+  for(const file of item.workspaceFiles||[]){if(typeof file.path!=='string'||!file.path||bubble.querySelector(`[data-workspace-path="${CSS.escape(file.path)}"]`))continue;const card=fileAction('@'+(file.name||file.path),()=>previewWorkspaceFile(file.path),'message-file-card');card.dataset.workspacePath=file.path;card.title=file.path;bubble.append(card);}
 };
 const filesReady=desktopReady.then(()=>{
   const status=document.createElement('div');status.id='files-import-status';status.setAttribute('role','status');$('composer-host').prepend(status);

@@ -9,9 +9,13 @@ mod desktop;
 mod document_ai;
 mod document_export;
 mod documents;
+mod exec_policy;
 mod goals;
+mod guardian;
 mod gui;
 mod images;
+mod local_environments;
+mod terminal;
 mod mcp;
 mod models;
 mod patch;
@@ -21,6 +25,7 @@ mod remote;
 mod scheduler;
 mod session;
 mod stream_display;
+mod thread_lifecycle;
 mod tools;
 mod tui;
 mod voice;
@@ -317,6 +322,8 @@ async fn async_main(
         mcp: Arc::new(mcp),
         plugins,
         session_allow: Default::default(),
+        patch_grants: Default::default(),
+        rules_home: Some(config::home()),
     };
     let cwd_s = cwd.display().to_string();
 
@@ -328,11 +335,18 @@ async fn async_main(
         }
         _ => (session::Session::create(&cwd_s, &model)?, vec![], vec![]),
     };
-    let mut client=api::Client::new(auth::Auth::load()?);client.service_tier=cfg.service_tier.as_deref().and_then(models::normalize_tier);
+    let mut client = api::Client::new(auth::Auth::load()?);
+    client.service_tier = cfg.service_tier.as_deref().and_then(models::normalize_tier);
     let mut agent = Agent {
+        approvals_reviewer: Default::default(),
+        model_catalog: std::sync::Arc::new(crate::models::Catalog::default()),
+        pending_context: Default::default(),
         web_search: web_search::SearchMode::Disabled,
         client,
-        reasoning_effort: cfg.model_reasoning_effort.clone().unwrap_or_else(||models::default_effort(&model)),
+        reasoning_effort: cfg
+            .model_reasoning_effort
+            .clone()
+            .unwrap_or_else(|| models::default_effort(&model)),
         model,
         mode: "codex".into(),
         goal_thread_id: None,
@@ -373,9 +387,13 @@ async fn async_main(
                     Event::Usage { .. }
                     | Event::GoalState(_)
                     | Event::TaskReport(_)
+                    | Event::ApprovalReview(_)
+                    | Event::TurnCancelled
+                    | Event::ToolExecuting { .. }
                     | Event::WebSearch(_) => {}
                     Event::ToolEnd { .. } | Event::Approval { .. } | Event::Done => {}
                     Event::Error(e) => eprintln!("error: {e}"),
+                    Event::Warning(message) => eprintln!("warning: {message}"),
                 }
             }
         };

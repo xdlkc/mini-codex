@@ -58,6 +58,25 @@ pub fn update_run(run_id: &str, patch: &Value) -> Result<Value> {
     Store::configured().update_run(run_id, patch, now_ms())
 }
 
+/// Archive removes heartbeat definitions, while completed and draining run
+/// records stay available for the user's history and final accounting.
+pub fn delete_archived_heartbeats(thread_id: &str) -> Result<Vec<String>> {
+    Store::configured().delete_heartbeats(thread_id)
+}
+
+pub fn pause_deleted_heartbeats(ids: &[String]) -> Result<()> {
+    Store::configured().transaction(|state| {
+        for id in ids {
+            let task = state["tasks"]
+                .get_mut(id)
+                .ok_or("Heartbeat disappeared during deletion")?;
+            task["state"] = json!("paused");
+            task["updatedAt"] = json!(now_ms());
+        }
+        Ok(((), !ids.is_empty()))
+    })
+}
+
 pub fn recover_interrupted() -> Result<()> {
     ensure_dispatch_owner(&Store::configured(), now_ms())
 }
@@ -608,6 +627,7 @@ impl Store {
             "scheduler/create" => {
                 let mut task = json!({"id":new_id("schedule"),"kind":"cron","mode":"codex","state":"active","reasoningEffort":"medium","notificationPolicy":null,"autoArchive":false,"executionEnvironment":"local","projects":[],"projectId":null,"targetThreadId":null,"createdAt":now,"updatedAt":now});
                 patch_task(&mut task, params, false)?;
+                let _target = self.heartbeat_access(&task)?;
                 let parsed = calendar(&task["schedule"])?;
                 let first = first_occurrence(&parsed)?;
                 // Reject an unbounded/unsafe catch-up scan before saving a job.
@@ -621,7 +641,9 @@ impl Store {
             "scheduler/update" => {
                 let id = text(params,"id")?;
                 let mut task = lookup(state,"tasks",id)?.clone();
+                let _source = self.heartbeat_access(&task)?;
                 patch_task(&mut task, params, true)?;
+                let _target = self.heartbeat_access(&task)?;
                 if params.get("schedule").is_some() {
                     let parsed = calendar(&task["schedule"])?;
                     next_after(&parsed, now)?;
@@ -638,7 +660,7 @@ impl Store {
             }
             "scheduler/delete" => {
                 let id = text(params,"id")?;
-                lookup(state,"tasks",id)?;
+                let _target = self.heartbeat_access(lookup(state,"tasks",id)?)?;
                 if !state["inFlight"][id].is_null() { return Err("stop or finish the running task before deleting it".into()); }
                 let delete_history = match params.get("deleteHistory") { None=>false,Some(value)=>value.as_bool().ok_or("deleteHistory must be a boolean")? };
                 state["tasks"].as_object_mut().unwrap().remove(id);
@@ -684,6 +706,9 @@ impl Store {
             let mut claims = Vec::new();
             for (id, at) in due {
                 let mut task = state["tasks"][&id].clone();
+                let Ok(_target) = self.heartbeat_access(&task) else {
+                    continue;
+                };
                 let original = calendar(&task["schedule"])?;
                 let source = if state["cursors"][&id].is_null() {
                     original
@@ -718,7 +743,36 @@ impl Store {
         timestamp(now)?;
         self.transaction(|state| {
             let task = lookup(state, "tasks", id)?.clone();
+            let _target = self.heartbeat_access(&task)?;
             Ok((claim(state, task, now, now, "manual")?, true))
+        })
+    }
+
+    fn heartbeat_access(&self, task: &Value) -> Result<Option<File>> {
+        if task["kind"] != "heartbeat" {
+            return Ok(None);
+        }
+        let id = text(task, "targetThreadId")?;
+        crate::thread_lifecycle::access_at(self.path.parent().unwrap(), id, false).map(Some)
+    }
+
+    fn delete_heartbeats(&self, thread_id: &str) -> Result<Vec<String>> {
+        self.transaction(|state| {
+            let ids: Vec<String> = state["tasks"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, task)| {
+                    task["kind"] == "heartbeat" && task["targetThreadId"] == thread_id
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &ids {
+                state["tasks"].as_object_mut().unwrap().remove(id);
+                state["cursors"].as_object_mut().unwrap().remove(id);
+            }
+            let changed = !ids.is_empty();
+            Ok((ids, changed))
         })
     }
 
@@ -935,7 +989,7 @@ fn claim(
         return Err("this task already has a running execution".into());
     }
     let id = new_id("run");
-    let run = json!({"id":id,"taskId":task_id,"taskName":task["name"],"kind":task["kind"],"mode":task["mode"],"trigger":trigger,"status":"running","scheduledFor":scheduled_for,"startedAt":now,"completedAt":null,"threadId":null,"threadIds":[],"worktrees":[],"error":null,"summary":null,"hasUpdate":null,"unread":false,"readAt":null,"reviewState":"IN_PROGRESS"});
+    let run = json!({"id":id,"taskId":task_id,"taskName":task["name"],"kind":task["kind"],"targetThreadId":task["targetThreadId"],"mode":task["mode"],"trigger":trigger,"status":"running","scheduledFor":scheduled_for,"startedAt":now,"completedAt":null,"threadId":null,"threadIds":[],"worktrees":[],"error":null,"summary":null,"hasUpdate":null,"unread":false,"readAt":null,"reviewState":"IN_PROGRESS"});
     state["inFlight"][&task_id] = json!(id);
     state["runs"][&id] = run.clone();
     Ok(json!({"task":task,"run":run}))
@@ -1500,6 +1554,86 @@ mod tests {
         let created = create(&fixture.store, params, now);
         assert_eq!(created["targetThreadId"], "existing-thread");
         assert!(created.get("threadId").is_none());
+    }
+
+    #[test]
+    fn archive_deletes_only_source_heartbeats_and_retains_draining_run_accounting() {
+        let fixture = Fixture::new();
+        let now = ms("2026-01-01T09:00:00Z");
+        let mut params = task(schedule("DTSTART:20260102T090000Z", None, "UTC"));
+        params["kind"] = json!("heartbeat");
+        params["targetThreadId"] = json!("source");
+        let source = create(&fixture.store, params.clone(), now);
+        params["targetThreadId"] = json!("other");
+        let other = create(&fixture.store, params, now);
+        let run = fixture
+            .store
+            .claim_run(source["id"].as_str().unwrap(), now)
+            .unwrap()["run"]
+            .clone();
+        assert_eq!(run["targetThreadId"], "source");
+        assert_eq!(
+            fixture.store.delete_heartbeats("source").unwrap(),
+            vec![source["id"].as_str().unwrap()]
+        );
+        assert!(fixture
+            .store
+            .rpc("scheduler/read", &json!({"id":source["id"]}), now)
+            .is_err());
+        assert!(fixture
+            .store
+            .rpc("scheduler/read", &json!({"id":other["id"]}), now)
+            .is_ok());
+        let finished = fixture
+            .store
+            .finish_run(
+                run["id"].as_str().unwrap(),
+                &json!({"status":"interrupted","summary":"Handed off"}),
+                now + 1,
+            )
+            .unwrap();
+        assert_eq!(finished["run"]["status"], "interrupted");
+        assert_eq!(
+            fixture
+                .store
+                .rpc("scheduler/runs", &json!({"taskId":source["id"]}), now)
+                .unwrap()["data"][0]["id"],
+            run["id"]
+        );
+    }
+
+    #[test]
+    fn archived_heartbeat_targets_cannot_be_claimed_or_reactivated() {
+        let fixture = Fixture::new();
+        let now = ms("2026-01-01T09:00:00Z");
+        let mut params = task(schedule(
+            "DTSTART:20260101T090000Z",
+            Some("FREQ=DAILY;COUNT=2"),
+            "UTC",
+        ));
+        params["kind"] = json!("heartbeat");
+        params["targetThreadId"] = json!("source");
+        let source = create(&fixture.store, params, now);
+        let metadata = fixture.root.join("session-metadata");
+        fs::create_dir(&metadata).unwrap();
+        fs::write(metadata.join("736f75726365.json"), b"{\"archived\":true}").unwrap();
+        let before = fs::read(&fixture.store.path).unwrap();
+        assert!(fixture.store.claim_due(now).unwrap().is_empty());
+        assert!(fixture
+            .store
+            .claim_run(source["id"].as_str().unwrap(), now)
+            .unwrap_err()
+            .contains("archived"));
+        assert!(fixture
+            .store
+            .rpc(
+                "scheduler/update",
+                &json!({"id":source["id"],"state":"active"}),
+                now
+            )
+            .unwrap_err()
+            .contains("archived"));
+        assert_eq!(fs::read(&fixture.store.path).unwrap(), before);
     }
 
     #[test]

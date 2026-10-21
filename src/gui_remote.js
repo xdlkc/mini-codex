@@ -102,10 +102,10 @@ window.__onServerMessage=function(message){
   }
   try{remoteBind(params,null);}catch(error){showError(error);return;}return remoteBaseMessage(message);
 };
-function remoteSnapshot(){return {cwd:currentCwd,model:currentModel,effort:currentEffort,sandbox:currentSandbox,fast:fastMode};}
+function remoteSnapshot(){return {cwd:currentCwd,model:currentModel,effort:currentEffort,sandbox:currentSandbox,fast:fastMode,...(typeof codexPermissionRequest==='function'?codexPermissionRequest():{})};}
 function remoteRemember(){const snapshot=remoteSnapshot(),profile=remoteContext();if(profile)remoteUi.contexts.set(profile,snapshot);else remoteUi.local=snapshot;}
 function remoteRestore(profileId){const connection=profileId?remoteConnection(profileId):null;const saved=profileId?remoteUi.contexts.get(profileId):remoteUi.local;
-  if(saved){currentCwd=saved.cwd;currentModel=saved.model;currentEffort=saved.effort;currentSandbox=saved.sandbox;fastMode=saved.fast;}
+  if(saved){currentCwd=saved.cwd;currentModel=saved.model;currentEffort=saved.effort;currentSandbox=saved.sandbox;fastMode=saved.fast;if(typeof codexPermissionsRestore==='function')codexPermissionsRestore(saved,false);}
   else if(connection){currentCwd=connection.initialize?.cwd||remoteProfile(profileId)?.remoteCwd||'';currentEffort='auto';}
 }
 draftKey=function(){return currentThread||(desktop.mode==='codex'&&remoteUi.active?'codex@'+remoteUi.active:desktop.mode);};
@@ -126,6 +126,10 @@ async function remoteSelect(profileId){
   remoteUi.active=profileId;
   let work;if(desktop.mode!=='codex')work=remoteBaseSwitchMode('codex');else{remoteRestore(profileId);if(typeof closeScheduledView==='function')closeScheduledView();work=remoteBaseNewThread(false,true);}
   const ownedNavigation=desktop.navigation;await work;if(ownedNavigation!==desktop.navigation)return;
+  if(typeof codexPermissionsDefaultsForDraft==='function'){
+    const context=connection?{key:profileId+'@'+connection.id,call:(method,params={},timeout)=>remoteCall(connection,method,params,timeout)}:{key:'local',call:remoteLocalRpc};
+    await codexPermissionsDefaultsForDraft(context);if(ownedNavigation!==desktop.navigation)return;
+  }
   desktop.threads=[];$('thread-list')?.replaceChildren();
   updateCwdUI(currentCwd);remoteRenderLocation();await Promise.all([refreshThreads(),refreshModelCatalog(false,true),typeof refreshProjects==='function'?refreshProjects():Promise.resolve(),connection?remoteRestoreApprovals(connection):Promise.resolve()]);
 }
@@ -148,7 +152,7 @@ openThread=async function(id){
   if(profile){if(desktop.mode!=='codex'||remoteUi.active!==profile||remoteUi.connections.get(profile)?.state!=='connected')await remoteSelect(profile);}
   const previous=remoteContext();if(!profile&&previous)remoteRemember();
   const result=await remoteBaseOpenThread(id);if(currentThread!==id)return result;
-  if(!profile){if(desktop.mode==='codex')remoteUi.active=null;const cwd=currentCwd;remoteRestore(null);currentCwd=cwd;updateCwdUI(cwd);}
+  if(!profile){const permissions=desktop.mode==='codex'&&typeof codexPermissionRequest==='function'?{...codexPermissionRequest(),sandboxMode:currentSandbox}:null;if(desktop.mode==='codex')remoteUi.active=null;const cwd=currentCwd;remoteRestore(null);currentCwd=cwd;if(permissions)codexPermissionsRestore(permissions);updateCwdUI(cwd);}
   remoteRenderLocation();await refreshModelCatalog(false,true);return result;
 };
 const remoteBaseProject=typeof openProject==='function'?openProject:null;

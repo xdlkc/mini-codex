@@ -6,6 +6,8 @@ pub fn app_html() -> String {
         .replace(
             "// DESKTOP_SCRIPT",
             &[
+                include_str!("vendor/terminal/xterm.js"),
+                include_str!("vendor/terminal/addon-fit.js"),
                 include_str!("gui_native_windows.js"),
                 include_str!("gui_desktop.js"),
                 include_str!("gui_scheduled.js"),
@@ -23,6 +25,14 @@ pub fn app_html() -> String {
                 include_str!("gui_search.js"),
                 include_str!("gui_native_controls.js"),
                 include_str!("gui_work_local.js"),
+                include_str!("gui_codex.js"),
+                include_str!("gui_codex_sidebar.js"),
+                include_str!("gui_codex_projects.js"),
+                include_str!("gui_codex_forks.js"),
+                include_str!("gui_codex_handoff.js"),
+                include_str!("gui_codex_permissions.js"),
+                include_str!("gui_codex_environments.js"),
+                include_str!("gui_terminal.js"),
             ]
             .join("\n"),
         )
@@ -43,10 +53,26 @@ pub fn app_html() -> String {
                 include_str!("gui_search.css"),
                 include_str!("gui_native_windows.css"),
                 include_str!("gui_work_local.css"),
+                include_str!("gui_codex.css"),
+                include_str!("gui_codex_sidebar.css"),
+                include_str!("gui_codex_forks.css"),
+                include_str!("gui_codex_handoff.css"),
+                include_str!("gui_codex_permissions.css"),
+                include_str!("gui_codex_environments.css"),
+                include_str!("vendor/terminal/xterm.css"),
+                include_str!("gui_terminal.css"),
             ]
             .join("\n"),
         )
         .replace("// MARKDOWN_VENDOR", include_str!("vendor/markdown.js"))
+        .replace(
+            "\"CODEX_MARK_SVG\"",
+            &serde_json::to_string(include_str!("../assets/codex-mark.svg")).unwrap(),
+        )
+        .replace(
+            "\"CODEX_SOURCE_ICONS\"",
+            include_str!("../assets/codex-icons.json"),
+        )
         .replace(
             "/* MARKDOWN_VENDOR_STYLES */",
             include_str!("vendor/markdown.css"),

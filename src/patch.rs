@@ -6,12 +6,13 @@ use std::path::{Component, Path, PathBuf};
 
 /// Resolve every existing ancestor before allowing a write. This also covers a
 /// new file whose parent is a symlink outside the workspace.
-fn workspace_path(root: &Path, path: &str) -> Result<PathBuf> {
+fn scoped_path(root: &Path, path: &str, allow_outside: bool) -> Result<PathBuf> {
     let requested = Path::new(path.trim());
     if requested.as_os_str().is_empty()
-        || requested
-            .components()
-            .any(|c| matches!(c, Component::ParentDir))
+        || !allow_outside
+            && requested
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
     {
         bail!("patch path must stay inside the workspace: {path}");
     }
@@ -28,7 +29,7 @@ fn workspace_path(root: &Path, path: &str) -> Result<PathBuf> {
                 let resolved = ancestor
                     .canonicalize()
                     .with_context(|| format!("resolving patch path {path}"))?;
-                if !resolved.starts_with(&root) {
+                if !allow_outside && !resolved.starts_with(&root) {
                     bail!("patch path is outside the workspace: {path}");
                 }
                 break;
@@ -46,7 +47,70 @@ fn workspace_path(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(candidate)
 }
 
+#[cfg(test)]
 pub fn apply(patch: &str, root: &Path) -> Result<String> {
+    apply_scoped(patch, root, false)
+}
+
+pub(crate) fn targets(patch: &str, root: &Path) -> Result<Vec<PathBuf>> {
+    anyhow::ensure!(
+        patch.lines().next().map(str::trim) == Some("*** Begin Patch")
+            && patch.lines().last().map(str::trim) == Some("*** End Patch"),
+        "patch must have Begin Patch and End Patch markers"
+    );
+    let mut targets = Vec::new();
+    for line in patch.lines() {
+        for prefix in [
+            "*** Add File: ",
+            "*** Update File: ",
+            "*** Delete File: ",
+            "*** Move to: ",
+        ] {
+            if let Some(path) = line.strip_prefix(prefix) {
+                let path = scoped_path(root, path, true)?;
+                let mut ancestor = path.as_path();
+                loop {
+                    match fs::symlink_metadata(ancestor) {
+                        Ok(_) => {
+                            let mut target = ancestor.canonicalize()?;
+                            // A missing suffix can still contain `..`. Resolve it before
+                            // checking the workspace boundary or caching a file grant.
+                            for component in path.strip_prefix(ancestor)?.components() {
+                                match component {
+                                    Component::ParentDir => {
+                                        target.pop();
+                                    }
+                                    Component::CurDir => {}
+                                    Component::Normal(name) => target.push(name),
+                                    _ => bail!("invalid patch target"),
+                                }
+                            }
+                            targets.push(target);
+                            break;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            ancestor = ancestor
+                                .parent()
+                                .ok_or_else(|| anyhow!("invalid patch path"))?;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+        }
+    }
+    Ok(targets)
+}
+
+pub(crate) fn apply_granted(patch: &str, root: &Path, expected: &[PathBuf]) -> Result<String> {
+    anyhow::ensure!(
+        targets(patch, root)? == expected,
+        "Patch targets changed after approval; no files were edited"
+    );
+    apply_scoped(patch, root, true)
+}
+
+fn apply_scoped(patch: &str, root: &Path, allow_outside: bool) -> Result<String> {
     let lines: Vec<&str> = patch.lines().collect();
     if lines.first().map(|l| l.trim()) != Some("*** Begin Patch") {
         bail!("patch must start with '*** Begin Patch'");
@@ -64,7 +128,7 @@ pub fn apply(patch: &str, root: &Path) -> Result<String> {
             "*** Move to: ",
         ] {
             if let Some(path) = line.strip_prefix(prefix) {
-                workspace_path(root, path)?;
+                scoped_path(root, path, allow_outside)?;
             }
         }
     }
@@ -83,7 +147,7 @@ pub fn apply(patch: &str, root: &Path) -> Result<String> {
                 );
                 i += 1;
             }
-            let path = workspace_path(root, p)?;
+            let path = scoped_path(root, p, allow_outside)?;
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -91,14 +155,15 @@ pub fn apply(patch: &str, root: &Path) -> Result<String> {
             report.push(format!("A {}", p.trim()));
         } else if let Some(p) = line.strip_prefix("*** Delete File: ") {
             i += 1;
-            fs::remove_file(workspace_path(root, p)?).with_context(|| format!("deleting {p}"))?;
+            fs::remove_file(scoped_path(root, p, allow_outside)?)
+                .with_context(|| format!("deleting {p}"))?;
             report.push(format!("D {}", p.trim()));
         } else if let Some(p) = line.strip_prefix("*** Update File: ") {
             i += 1;
             let mut dest: Option<PathBuf> = None;
             if i < body.len() {
                 if let Some(m) = body[i].strip_prefix("*** Move to: ") {
-                    dest = Some(workspace_path(root, m)?);
+                    dest = Some(scoped_path(root, m, allow_outside)?);
                     i += 1;
                 }
             }
@@ -106,7 +171,7 @@ pub fn apply(patch: &str, root: &Path) -> Result<String> {
             while i < body.len() && !(body[i].starts_with("*** ") && body[i] != "*** End of File") {
                 i += 1;
             }
-            let src = workspace_path(root, p)?;
+            let src = scoped_path(root, p, allow_outside)?;
             let original = fs::read_to_string(&src).with_context(|| format!("reading {p}"))?;
             let updated =
                 update(&original, &body[start..i]).with_context(|| format!("patching {p}"))?;

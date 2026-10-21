@@ -60,6 +60,7 @@ struct NativeWindow {
 enum UserEvent {
     ServerMsg(String),
     WindowCommand(WindowId, Value),
+    DocumentTitle(WindowId, String),
     CaptureResult(WindowId, Result<Value, String>),
     RequestQuit,
     BackendStopped,
@@ -175,7 +176,9 @@ fn make_window(
     let downloads = Arc::new(std::sync::Mutex::new(HashMap::<String, String>::new()));
     let started = downloads.clone();
     let download_proxy = proxy.clone();
+    let title_proxy = proxy.clone();
     let webview=WebViewBuilder::new().with_initialization_script(&initialization).with_url(url)
+        .with_document_title_changed_handler(move|title|{let _=title_proxy.send_event(UserEvent::DocumentTitle(id,title));})
         .with_navigation_handler(move|url|{if url==document_url||url.starts_with(&format!("{document_url}#")){return true;}open_external_link(&url);false})
         // Wry routes subframe navigation through this callback on macOS too.
         // Only local sandbox frames may load here. Trusted main-frame links use
@@ -362,6 +365,7 @@ pub fn launch(shared: Shared) -> Result<()> {
             Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{command=Some((window_id,serde_json::json!({"__window":"requestClose"})));}
             Event::Reopen{..}=>{if let Some(window)=windows.get(&main_id){show_window(window);}active=main_id;}
             Event::UserEvent(UserEvent::WindowCommand(id,value))=>command=Some((id,value)),
+            Event::UserEvent(UserEvent::DocumentTitle(id,title))=>{if let Some(window)=windows.get(&id){window.window.set_title(&title);}}
             Event::UserEvent(UserEvent::BackendStopped)=>{if quit_pending.is_some(){#[cfg(target_os="macos")]native_shell::reply_to_termination(true);*flow=ControlFlow::Exit;}},
             Event::UserEvent(UserEvent::RequestQuit)=>{command=Some((active,serde_json::json!({"__window":"quit"})));}
             #[cfg(target_os="macos")]

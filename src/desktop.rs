@@ -53,6 +53,17 @@ pub fn handle(method: &str, params: &Value) -> Option<Result<Value, String>> {
     })())
 }
 
+/// Roll back metadata only after a newly created rollout has been removed.
+/// This operation is deliberately absent from the public RPC method list.
+pub(crate) fn discard_failed_thread(id: &str) -> Result<(), String> {
+    let _guard = STORE_LOCK
+        .lock()
+        .map_err(|_| "Desktop state lock is unavailable")?;
+    Store::new(crate::config::home().join("desktop.json"))
+        .handle("desktop/threadMetadata/discard", &json!({"threadId":id}))?;
+    Ok(())
+}
+
 struct Store {
     path: PathBuf,
 }
@@ -176,7 +187,7 @@ impl Store {
     }
 
     fn handle(&self, method: &str, params: &Value) -> Result<Value, String> {
-        if !METHODS.contains(&method) {
+        if !METHODS.contains(&method) && method != "desktop/threadMetadata/discard" {
             return Err(format!("Unknown desktop method: {method}"));
         }
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
@@ -198,7 +209,9 @@ impl Store {
         let lock = options
             .open(lock_path)
             .map_err(|e| format!("Could not open desktop state lock: {e}"))?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        // Concurrent windows and processes must reach the revision check even
+        // when another save is delayed by filesystem or CPU contention.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             match lock.try_lock() {
                 Ok(()) => break,
@@ -259,6 +272,14 @@ impl Store {
                 let id = required_string(params, "threadId")?;
                 return Ok(json!({"metadata": state["threadMetadata"].get(id)}));
             }
+            "desktop/threadMetadata/discard" => {
+                let id = required_string(params, "threadId")?;
+                if crate::session::Session::open(Some(id)).is_ok() {
+                    return Err("A saved conversation still owns this metadata".into());
+                }
+                state["threadMetadata"].as_object_mut().unwrap().remove(id);
+                json!({"discarded":true})
+            }
             "desktop/threadMetadata/list" => {
                 validate_filters(params)?;
                 return Ok(json!({"items": filter_items(&state["threadMetadata"], params, false)}));
@@ -272,6 +293,49 @@ impl Store {
                     })
                 });
                 patch_mode(&mut item, params)?;
+                if let Some(value) = params.get("approvalsReviewer") {
+                    item["approvalsReviewer"] = json!(crate::guardian::Reviewer::parse(value)
+                        .map_err(|_| {
+                            "approvalsReviewer must be user, guardian_subagent or auto_review"
+                        })?
+                        .name());
+                }
+                if let Some(value) = params.get("approvalPolicy") {
+                    if !["on-request", "never"]
+                        .iter()
+                        .any(|policy| value == *policy)
+                    {
+                        return Err("Unsupported approval policy".into());
+                    }
+                    item["approvalPolicy"] = value.clone();
+                }
+                if let Some(value) = params.get("sandboxMode") {
+                    if !["read-only", "workspace-write", "danger-full-access"]
+                        .iter()
+                        .any(|mode| value == *mode)
+                    {
+                        return Err("Invalid sandbox mode".into());
+                    }
+                    item["sandboxMode"] = value.clone();
+                }
+                if let Some(origin) = params.get("forkedFromId") {
+                    if !origin.is_null()
+                        && origin
+                            .as_str()
+                            .is_none_or(|value| value.trim().is_empty() || value.len() > 1024)
+                    {
+                        return Err("forkedFromId must be a non-empty string or null".into());
+                    }
+                    item["forkedFromId"] = origin.clone();
+                }
+                if let Some(effort) = params.get("reasoningEffort") {
+                    if effort.as_str().is_none_or(|value| {
+                        value != "auto" && !crate::models::EFFORTS.contains(&value)
+                    }) {
+                        return Err("Invalid reasoning effort".into());
+                    }
+                    item["reasoningEffort"] = effort.clone();
+                }
                 let previous_mode = item["webSearchMode"]
                     .as_str()
                     .map(String::from)
@@ -347,6 +411,8 @@ impl Store {
                 });
                 patch_mode(&mut item, params)?;
                 patch_string(&mut item, params, "instructions", false)?;
+                patch_project_directory(&mut item, params, true)?;
+                check_project_directory_unique(&state, &item)?;
                 state["projects"][&id] = item.clone();
                 json!({"project": item})
             }
@@ -356,6 +422,8 @@ impl Store {
                 patch_mode(&mut item, params)?;
                 patch_string(&mut item, params, "name", true)?;
                 patch_string(&mut item, params, "instructions", false)?;
+                patch_project_directory(&mut item, params, false)?;
+                check_project_directory_unique(&state, &item)?;
                 item["updatedAt"] = json!(next_timestamp(&item));
                 state["projects"][id] = item.clone();
                 json!({"project": item})
@@ -477,6 +545,72 @@ fn patch_string(
         } else {
             value.clone()
         };
+    }
+    Ok(())
+}
+
+/// Project folders belong to the machine handling this RPC. Never create a missing
+/// source folder or substitute the project's display name for an execution path.
+fn patch_project_directory(
+    item: &mut Value,
+    params: &Map<String, Value>,
+    creating: bool,
+) -> Result<(), String> {
+    if item["mode"] != "codex" {
+        if params.contains_key("path") || params.contains_key("hostId") {
+            return Err("Directory bindings are only supported for Codex projects".into());
+        }
+        return Ok(());
+    }
+    if let Some(value) = params.get("path") {
+        let text = value
+            .as_str()
+            .filter(|path| !path.trim().is_empty())
+            .ok_or("path must be a non-empty absolute directory")?;
+        let source = Path::new(text);
+        if !source.is_absolute() {
+            return Err("path must be an absolute directory".into());
+        }
+        let directory = source
+            .canonicalize()
+            .map_err(|error| format!("Cannot open project folder {}: {error}", source.display()))?;
+        if !directory.is_dir() {
+            return Err("Project path is not a directory".into());
+        }
+        item["path"] = json!(directory
+            .to_str()
+            .ok_or("Project path cannot be represented as UTF-8")?);
+    } else if creating {
+        return Err("Select a source folder for the Codex project".into());
+    }
+    if let Some(value) = params.get("hostId") {
+        let host = value
+            .as_str()
+            .filter(|host| !host.trim().is_empty())
+            .ok_or("hostId must be a non-empty string")?;
+        item["hostId"] = json!(host);
+    } else if creating {
+        item["hostId"] = json!("local");
+    }
+    Ok(())
+}
+
+fn check_project_directory_unique(state: &Value, item: &Value) -> Result<(), String> {
+    let Some(path) = item["path"].as_str().filter(|_| item["mode"] == "codex") else {
+        return Ok(());
+    };
+    if let Some(project) = state["projects"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|other| {
+            other["id"] != item["id"] && other["mode"] == "codex" && other["path"] == path
+        })
+    {
+        return Err(format!(
+            "This folder is already set up for {}",
+            project["name"].as_str().unwrap_or("another project")
+        ));
     }
     Ok(())
 }
@@ -656,6 +790,89 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn codex_projects_persist_real_folders_and_host_bindings() {
+        let store = TestStore::new();
+        let directory = store.directory.join("source");
+        fs::create_dir_all(&directory).unwrap();
+        let project = store.call(
+            "desktop/project/create",
+            json!({"name":"Display name", "mode":"codex", "path":directory.join("."), "hostId":"ssh-fixture"}),
+        )["project"].clone();
+        let canonical = directory.canonicalize().unwrap();
+        assert_eq!(project["path"], canonical.to_str().unwrap());
+        assert_eq!(project["hostId"], "ssh-fixture");
+        store.call(
+            "desktop/project/update",
+            json!({"id":project["id"], "name":"Renamed"}),
+        );
+        let reloaded = store
+            .open()
+            .handle("desktop/project/list", &json!({"mode":"codex"}))
+            .unwrap();
+        assert_eq!(reloaded["items"][0]["path"], project["path"]);
+        assert_eq!(reloaded["items"][0]["hostId"], "ssh-fixture");
+        assert_eq!(reloaded["items"][0]["name"], "Renamed");
+        assert!(!directory.join(".git").exists());
+    }
+
+    #[test]
+    fn codex_project_folder_validation_never_creates_missing_sources() {
+        let store = TestStore::new();
+        store.call("desktop/settings/update", json!({"mode":"codex"}));
+        let missing = store.directory.join("missing");
+        let file = store.directory.join("file.txt");
+        fs::write(&file, "fixture").unwrap();
+        let before = fs::read(store.open().path).unwrap();
+        for params in [
+            json!({"name":"Name only"}),
+            json!({"name":"Missing", "path":missing}),
+            json!({"name":"Relative", "path":"relative/path"}),
+            json!({"name":"File", "path":file}),
+            json!({"name":"Invalid host", "path":store.directory, "hostId":null}),
+        ] {
+            assert!(store
+                .open()
+                .handle("desktop/project/create", &params)
+                .is_err());
+            assert_eq!(fs::read(store.open().path).unwrap(), before);
+        }
+        assert!(!missing.exists());
+        assert!(store.call("desktop/project/list", json!({}))["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn codex_duplicate_folders_and_failed_rebindings_preserve_saved_project() {
+        let store = TestStore::new();
+        let directory = store.directory.join("source");
+        fs::create_dir_all(&directory).unwrap();
+        let project = store.call(
+            "desktop/project/create",
+            json!({"name":"Original", "path":directory}),
+        )["project"]
+            .clone();
+        let before = fs::read(store.open().path).unwrap();
+        assert!(store
+            .open()
+            .handle(
+                "desktop/project/create",
+                &json!({"name":"Duplicate", "path":directory.join(".")})
+            )
+            .is_err());
+        assert!(store
+            .open()
+            .handle(
+                "desktop/project/update",
+                &json!({"id":project["id"], "name":"Not saved", "path":directory.join("missing")})
+            )
+            .is_err());
+        assert_eq!(fs::read(store.open().path).unwrap(), before);
+        assert!(!directory.join("missing").exists());
     }
 
     #[test]

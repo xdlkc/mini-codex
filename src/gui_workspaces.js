@@ -23,18 +23,28 @@ async function useWorkspace(worktree,context=workspaceCapture()) {
 async function createWorktreeDialog(cwd=currentCwd,context=workspaceCapture()) {
   workspaceRequire(context);
   closeFloatingMenu();
-  openCustomModal('New worktree','<p>Start an isolated workspace from a committed Git revision.</p><div id="worktree-create-fields" class="workspace-form"></div>');
+  openCustomModal('New worktree','<p>Start an isolated workspace from a Git branch or commit.</p><div id="worktree-create-fields" class="workspace-form"></div>');
   const box=$('worktree-create-fields');
   const name=workspaceField('Name','worktree-create-name','','Feature work');
-  const base=workspaceField('Start from','worktree-create-base','HEAD','Branch, tag or commit');
+  const base=workspaceField('Branch','worktree-create-base','HEAD','Branch, tag or commit');
   const branch=workspaceField('New branch (optional)','worktree-create-branch','','codex/…');
   box.append(name.label,name.input,base.label,base.input,branch.label,branch.input);
-  const note=document.createElement('small');note.textContent='Uncommitted changes stay in the current workspace.';note.className='workspace-note';box.append(note);
+  const localHeading=document.createElement('span');localHeading.textContent='Local file state';box.append(localHeading);
+  const localLabel=document.createElement('label');localLabel.className='workspace-checkbox';
+  const local=document.createElement('input');local.type='checkbox';local.id='worktree-include-local-changes';
+  localLabel.append(local,document.createTextNode('With local code changes'));box.append(localLabel);
+  const note=document.createElement('small');note.id='worktree-local-state-note';note.className='workspace-note';
+  const updateLocalState=()=>{note.textContent=local.checked?'Copies staged, unstaged and untracked files. The branch must point to the current HEAD. Ignored files stay in the source workspace.':'Starts with clean files from the selected branch. Local changes stay in the current workspace.';};
+  local.onchange=updateLocalState;updateLocalState();box.append(note);
+  const environment=typeof codexEnvironmentCreateFields==='function'?await codexEnvironmentCreateFields(box,cwd,context).catch(error=>{showError(error);return null;}):null;
   const create=workspaceButton('Create worktree',async()=>{
     workspaceRequire(context);const ticket=desktop.navigation;
     const params={cwd,baseRef:base.input.value.trim()||'HEAD'};
+    if(environment)params.localEnvironmentConfigPath=environment.value||null;
+    if(local.checked)params.includeLocalChanges=true;
     if(name.input.value.trim())params.name=name.input.value.trim();if(branch.input.value.trim())params.branch=branch.input.value.trim();
     const result=await context.call('workspace/worktree/create',params);
+    if(result.setupRun&&typeof codexEnvironmentRemember==='function')codexEnvironmentRemember(result.setupRun,environment?._host||'local');
     if(ticket===desktop.navigation&&workspaceCurrent(context)&&$('worktree-create-fields')===box){closeModal();await useWorkspace(result.worktree,context);}toast('Worktree created');
   },'btn-pill primary');box.append(create);name.input.focus();
 }
@@ -42,6 +52,7 @@ function archiveWorktreeDialog(worktree,cwd=currentCwd,context=workspaceCapture(
   workspaceRequire(context);
   openCustomModal('Archive worktree?','<p>Save a recoverable snapshot, then remove this checkout. The snapshot keeps commits, staged edits, unstaged edits and untracked files.</p><div id="worktree-archive-options" class="workspace-form"></div>');
   const box=$('worktree-archive-options');
+  if(typeof codexEnvironmentArchiveControls==='function')codexEnvironmentArchiveControls(box,worktree,context);
   const label=document.createElement('label');label.className='workspace-checkbox';const include=document.createElement('input');include.type='checkbox';include.id='worktree-include-ignored';label.append(include,document.createTextNode('Also save ignored files'));box.append(label);
   const note=document.createElement('small');note.className='workspace-note';note.textContent='If this workspace has ignored files, choose this option to preserve them. No files are discarded by default.';box.append(note);
   box.append(workspaceButton('Cancel',async()=>closeModal()),workspaceButton('Archive',async()=>{
@@ -112,6 +123,7 @@ refreshGitStatus=async function(){
     $('branch-badge').style.display=status.isGit===false?'none':'inline-flex';$('branch-name').textContent=status.branch||(status.isGit===false?'':'Detached HEAD');
     $('top-diff-add').textContent='+'+(status.totalAdded||0);$('top-diff-del').textContent='-'+(status.totalDeleted||0);
     if(drawerOpen&&currentDrawerTab==='diff')renderDrawerContent();
+    if(typeof codexSyncChrome==='function')codexSyncChrome();
   }catch(error){if(ticket!==workspaceGitRequest||!workspaceCurrent(context)||cwd!==currentCwd)return;latestGitStatus=null;$('branch-badge').style.display='none';$('top-diff-add').textContent='+0';$('top-diff-del').textContent='-0';}
 };
 const workspaceReady=desktopReady.then(()=>{

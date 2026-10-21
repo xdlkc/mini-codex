@@ -76,7 +76,9 @@ class MockResponses:
                         self.event({"type": "response.failed", "response": {"status": "failed", "error": {"message": "local mock stream failure"}}})
                     elif scenario.kind in ["approval", "scope_escape"]:
                         command = ["/bin/sh", "-c", "printf unexpected > scope-guard-created.txt"] if scenario.kind == "scope_escape" else ["/usr/bin/true"]
-                        call = {"type": "function_call", "id": "mock-function", "call_id": f"mock-call-{id(scenario)}", "name": "shell", "arguments": json.dumps({"command": command})}
+                        arguments={"command":command}
+                        if scenario.kind=='approval':arguments.update(sandbox_permissions='require_escalated',justification='Exercise an explicit additional-access request in the local fixture')
+                        call = {"type": "function_call", "id": "mock-function", "call_id": f"mock-call-{id(scenario)}", "name": "shell", "arguments": json.dumps(arguments)}
                         self.event({"type": "response.output_item.done", "item": call})
                         self.event({"type": "response.completed", "response": {"status": "completed", "output": [call]}})
                     elif scenario.kind == "slow":
@@ -412,6 +414,25 @@ def run(binary: Path, timeout: float) -> None:
             require({path.relative_to(workspace) for path in workspace.rglob("*")} == before_paths, "undeclared Chat tool created workspace files")
             checks += 1
             print("PASS Chat rejects provider shell calls without approvals, command execution, or workspace writes", flush=True)
+
+            (workspace / "mentioned.txt").write_text("LOCAL_WORKSPACE_MENTION_SENTINEL",encoding="utf-8")
+            mention_thread=app.start("codex",project_id)
+            for prompt in ["Read this workspace file",""]:
+                scenario=mock.plan("success","你好，文件引用已正确传入 🙂")
+                mention_turn=app.turn(mention_thread,[{"type":"text","text":prompt},{"type":"mention","path":"mentioned.txt"}])
+                request=mock.request();requests+=1
+                last_user=[item for item in request["input"] if item.get("role")=="user"][-1]
+                require("LOCAL_WORKSPACE_MENTION_SENTINEL" in json.dumps(last_user),"workspace file content did not reach the model")
+                require("_mcodex_display" not in json.dumps(request),"private workspace presentation reached the model")
+                app.assert_chinese_completion(mention_thread,mention_turn,scenario.text)
+                history=app.rpc("thread/read",{"threadId":mention_thread,"includeTurns":True})["thread"]["turns"]
+                user=[item for turn in history for item in turn["items"] if item["type"]=="userMessage"][-1]
+                require("".join(part.get("text","") for part in user["content"])==prompt,"model-only file content leaked into the user bubble")
+                require(user["workspaceFiles"]==[{"path":"mentioned.txt","name":"mentioned.txt"}],"workspace reference was lost from history")
+            forked=app.rpc("thread/fork",{"threadId":mention_thread})["thread"]
+            require(any(item.get("workspaceFiles") for turn in forked["turns"] for item in turn["items"]),"workspace reference did not survive a fork")
+            checks+=1
+            print("PASS workspace references keep content in model context and file cards in visible history/forks",flush=True)
 
             mock.plan("failed")
             thread_id = app.start("chat", project_id)

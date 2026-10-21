@@ -821,19 +821,24 @@ impl RemoteHub {
             "remote/approval/respond" => {
                 let connection = self.connection(p)?;
                 let id = text(p, "requestId")?;
-                let decision = text(p, "decision")?;
-                if !["accept", "acceptForSession", "decline", "cancel"].contains(&decision) {
-                    return Err("Unsupported approval decision".into());
-                }
-                let approval = connection
-                    .approvals
-                    .lock()
-                    .unwrap()
-                    .remove(id)
-                    .ok_or("Remote approval is no longer pending")?;
-                if !approval.method.ends_with("/requestApproval") {
-                    return Err("Remote request is not an approval".into());
-                }
+                let decision = p.get("decision").ok_or("decision is required")?.clone();
+                let approval = {
+                    let mut pending = connection.approvals.lock().unwrap();
+                    let approval = pending
+                        .get(id)
+                        .ok_or("Remote approval is no longer pending")?;
+                    if !approval.method.ends_with("/requestApproval") {
+                        return Err("Remote request is not an approval".into());
+                    }
+                    let plain = decision.as_str().is_some_and(|decision| {
+                        ["accept", "acceptForSession", "decline", "cancel"].contains(&decision)
+                    });
+                    let amendment=approval.params["proposedExecpolicyAmendment"].as_array().filter(|prefix|!prefix.is_empty()).is_some_and(|prefix|decision==json!({"acceptWithExecpolicyAmendment":{"execpolicy_amendment":prefix}}));
+                    if !plain && !amendment {
+                        return Err("Unsupported approval decision or command rule does not match the offered prefix".into());
+                    }
+                    pending.remove(id).unwrap()
+                };
                 if let Err(e) = connection
                     .send(&json!({"id":approval.remote_id,"result":{"decision":decision}}))
                     .await
@@ -1654,6 +1659,15 @@ os.execve('/bin/sh',['sh','-c',a[-1]],e)
 
     #[tokio::test]
     async fn real_agent_approval_is_remapped_answered_and_executes_on_the_remote_process() {
+        real_agent_approval_roundtrip(false).await;
+    }
+
+    #[tokio::test]
+    async fn real_agent_rule_approval_stays_on_its_host_and_rejects_a_changed_prefix() {
+        real_agent_approval_roundtrip(true).await;
+    }
+
+    async fn real_agent_approval_roundtrip(save_rule: bool) {
         use tokio::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1703,7 +1717,7 @@ os.execve('/bin/sh',['sh','-c',a[-1]],e)
                     .unwrap(),
                 );
                 let item = if round == 0 {
-                    json!({"type":"function_call","id":"remote_function","call_id":"remote_call","name":"shell","arguments":json!({"command":["/usr/bin/printf","REMOTE_APPROVAL_EXECUTED"]}).to_string()})
+                    json!({"type":"function_call","id":"remote_function","call_id":"remote_call","name":"shell","arguments":json!({"command":["/usr/bin/printf","REMOTE_APPROVAL_EXECUTED"],"sandbox_permissions":"require_escalated","justification":"Exercise remote approval forwarding for this fixture"}).to_string()})
                 } else {
                     json!({"type":"message","id":"remote_answer","role":"assistant","content":[{"type":"output_text","text":"Remote approved execution completed"}]})
                 };
@@ -1743,10 +1757,27 @@ os.execve('/bin/sh',['sh','-c',a[-1]],e)
         )
         .await;
         assert_eq!(pending["data"][0]["id"], request_id);
+        let decision = if save_rule {
+            let prefix = approval["params"]["params"]["proposedExecpolicyAmendment"]
+                .as_array()
+                .expect("remote command must offer its actual prefix");
+            assert!(hub.handle("remote/approval/respond",&json!({"connectionId":cid,"requestId":request_id,"decision":{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["different-prefix"]}}})).await.unwrap().is_err());
+            let pending = rpc(
+                &hub,
+                "remote/rpc",
+                json!({"connectionId":cid,"method":"approval/list","params":{"threadId":tid}}),
+            )
+            .await;
+            assert_eq!(pending["data"].as_array().unwrap().len(), 1);
+            assert!(!f.remote.join("rules/default.rules").exists());
+            json!({"acceptWithExecpolicyAmendment":{"execpolicy_amendment":prefix}})
+        } else {
+            json!("accept")
+        };
         rpc(
             &hub,
             "remote/approval/respond",
-            json!({"connectionId":cid,"requestId":request_id,"decision":"accept"}),
+            json!({"connectionId":cid,"requestId":request_id,"decision":decision}),
         )
         .await;
         let mut resolved = false;
@@ -1788,6 +1819,14 @@ os.execve('/bin/sh',['sh','-c',a[-1]],e)
         assert!(restored["thread"]["turns"]
             .to_string()
             .contains("Remote approved execution completed"));
+        assert!(!f.store.join("rules/default.rules").exists());
+        if save_rule {
+            assert!(fs::read_to_string(f.remote.join("rules/default.rules"))
+                .unwrap()
+                .contains("REMOTE_APPROVAL_EXECUTED"));
+        } else {
+            assert!(!f.remote.join("rules/default.rules").exists());
+        }
         hub.shutdown().await;
     }
 
