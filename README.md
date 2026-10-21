@@ -8,7 +8,7 @@
   A Rust implementation of the Codex CLI &amp; Native macOS Desktop App (<code>tao</code> + <code>wry</code> + <code>ratatui</code>).
 </p>
 
-更新日期：2026-10-21。
+更新日期：2026-10-22。
 
 ## 桌面工作区
 
@@ -43,10 +43,14 @@ cargo run                 # 终端界面
 cargo run -- app          # macOS 原生桌面窗口
 cargo run -- preview      # 同一界面和 Rust 后端：http://127.0.0.1:5173
 mcodex login              # 浏览器 OAuth；也可设置 OPENAI_API_KEY
-./scripts/package-macos.sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+./scripts/package-macos.sh # Universal 2: Apple Silicon + Intel
+./scripts/package-macos.sh --arch arm64 # Apple Silicon only
 ./scripts/package-macos.sh --debug --app-only # Fast local app bundle
 ./scripts/package-agent.sh --debug --offline # Actual host target, headless binary + source
 ```
+
+macOS 发布包默认使用 Universal 2，同时包含 `arm64` 和 `x86_64`，最低支持 macOS 12。M 系列 Mac 使用原生 arm64 程序，无需 Rosetta。单架构包会在文件名中标明 `arm64` 或 `x86_64`；调试包默认使用当前机器的架构。打包前会核对所需架构，缺少任何一个架构时不会生成发布包。
 
 macOS App 的 HTTP 客户端会读取系统代理设置。代理在系统设置中维护，App 不硬编码代理端口；TLS 证书校验继续开启。
 

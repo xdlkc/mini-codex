@@ -9,21 +9,60 @@ export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 APP_NAME="Mini ChatGPT"
 BUNDLE_ID="com.minicodex.desktop"
 BUILD_PROFILE="release"
+BUILD_ARCH=""
 APP_ONLY=0
 REGEN_ICON=0
-for argument in "$@"; do
-  case "$argument" in
-    --debug) BUILD_PROFILE="debug" ;;
-    --app-only) APP_ONLY=1 ;;
-    --regen-icon) REGEN_ICON=1 ;;
-    *) echo "Unknown option: $argument" >&2; exit 2 ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --debug) BUILD_PROFILE="debug"; shift ;;
+    --app-only) APP_ONLY=1; shift ;;
+    --regen-icon) REGEN_ICON=1; shift ;;
+    --arch)
+      [[ $# -ge 2 ]] || { echo "--arch requires universal, arm64, x86_64 or native" >&2; exit 2; }
+      BUILD_ARCH="$2"; shift 2 ;;
+    --help)
+      echo "Usage: scripts/package-macos.sh [--arch universal|arm64|x86_64|native] [--debug] [--app-only] [--regen-icon]"
+      echo "Release builds default to Universal 2 (Apple Silicon and Intel); debug builds default to native."
+      exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
+if [[ -z "$BUILD_ARCH" ]]; then
+  if [[ "$BUILD_PROFILE" == "release" ]]; then BUILD_ARCH="universal"; else BUILD_ARCH="native"; fi
+fi
+HOST_TARGET="$(rustc -vV | awk '/^host:/ {print $2}')"
+case "$BUILD_ARCH" in
+  universal) BUILD_TARGETS=(aarch64-apple-darwin x86_64-apple-darwin); EXPECTED_ARCHS=(arm64 x86_64) ;;
+  arm64) BUILD_TARGETS=(aarch64-apple-darwin); EXPECTED_ARCHS=(arm64) ;;
+  x86_64) BUILD_TARGETS=(x86_64-apple-darwin); EXPECTED_ARCHS=(x86_64) ;;
+  native)
+    BUILD_TARGETS=("$HOST_TARGET")
+    case "$HOST_TARGET" in
+      aarch64-apple-darwin) EXPECTED_ARCHS=(arm64) ;;
+      x86_64-apple-darwin) EXPECTED_ARCHS=(x86_64) ;;
+      *) echo "A macOS build host is required" >&2; exit 2 ;;
+    esac ;;
+  *) echo "Unsupported macOS architecture: $BUILD_ARCH" >&2; exit 2 ;;
+esac
+for target in "${BUILD_TARGETS[@]}"; do
+  target_lib="$(rustc --print target-libdir --target "$target")"
+  if [[ ! -d "$target_lib" ]]; then
+    echo "Missing Rust target. Run: rustup target add $target" >&2
+    exit 1
+  fi
+done
+# Both slices must support the same minimum macOS version as Info.plist.
+export MACOSX_DEPLOYMENT_TARGET="12.0"
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+[[ "$TARGET_DIR" = /* ]] || TARGET_DIR="$ROOT_DIR/$TARGET_DIR"
 VERSION="$(grep -E '^version\s*=' Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
-DMG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos.dmg"
-PKG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos.pkg"
+ARTIFACT_SUFFIX=""
+[[ "$BUILD_ARCH" == "universal" ]] || ARTIFACT_SUFFIX="-${EXPECTED_ARCHS[0]}"
+[[ "$BUILD_PROFILE" != "debug" ]] || ARTIFACT_SUFFIX="${ARTIFACT_SUFFIX}-debug"
+DMG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos${ARTIFACT_SUFFIX}.dmg"
+PKG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos${ARTIFACT_SUFFIX}.pkg"
 
 echo "==> [1/5] Preparing App Icon (assets/AppIcon.icns)..."
 if [[ ! -f "assets/AppIcon.icns" || ! -f "assets/icon_256.png" || "$REGEN_ICON" == "1" ]]; then
@@ -68,15 +107,36 @@ try! pngData.write(to: URL(fileURLWithPath: "assets/icon.png"))
   rm -rf "$(dirname "$ICONSET_DIR")"
 fi
 
-echo "==> [2/5] Building ${BUILD_PROFILE} binary (mcodex v${VERSION})..."
-if [[ "$BUILD_PROFILE" == "release" ]]; then cargo build --release; else cargo build; fi
+echo "==> [2/5] Building ${BUILD_PROFILE} ${BUILD_ARCH} binary (mcodex v${VERSION})..."
+BUILD_INPUTS=()
+for target in "${BUILD_TARGETS[@]}"; do
+  build_args=(build --locked --bin mcodex)
+  [[ "$BUILD_PROFILE" != "release" ]] || build_args+=(--release)
+  if [[ "$BUILD_ARCH" == "native" ]]; then
+    cargo "${build_args[@]}"
+    BUILD_INPUTS+=("$TARGET_DIR/$BUILD_PROFILE/mcodex")
+  else
+    cargo "${build_args[@]}" --target "$target"
+    BUILD_INPUTS+=("$TARGET_DIR/$target/$BUILD_PROFILE/mcodex")
+  fi
+done
+if [[ "$BUILD_ARCH" == "universal" ]]; then
+  UNIVERSAL_DIR="$TARGET_DIR/universal-apple-darwin/$BUILD_PROFILE"
+  mkdir -p "$UNIVERSAL_DIR"
+  BUILT_BINARY="$UNIVERSAL_DIR/mcodex"
+  xcrun lipo -create "${BUILD_INPUTS[@]}" -output "$BUILT_BINARY"
+else
+  BUILT_BINARY="${BUILD_INPUTS[0]}"
+fi
+# Refuse to emit an installer if a requested architecture is missing.
+xcrun lipo "$BUILT_BINARY" -verify_arch "${EXPECTED_ARCHS[@]}"
 
 echo "==> [3/5] Assembling ${APP_NAME}.app bundle..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-cp "target/$BUILD_PROFILE/mcodex" "$APP_BUNDLE/Contents/MacOS/mcodex"
+cp "$BUILT_BINARY" "$APP_BUNDLE/Contents/MacOS/mcodex"
 chmod +x "$APP_BUNDLE/Contents/MacOS/mcodex"
 cp "assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP_BUNDLE/Contents/Resources/ThirdPartyLicenses"
@@ -124,6 +184,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
 EOF
 
 codesign --force --deep --sign - "$APP_BUNDLE"
+xcrun lipo "$APP_BUNDLE/Contents/MacOS/mcodex" -verify_arch "${EXPECTED_ARCHS[@]}"
+codesign --verify --deep --strict --all-architectures "$APP_BUNDLE"
 
 if [[ "$APP_ONLY" == "1" ]]; then
   echo "App bundle ready: $APP_BUNDLE"
