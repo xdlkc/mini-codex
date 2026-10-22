@@ -58,3 +58,14 @@ test('receiving a new chat keeps the main draft, local project, files and refere
   h.sent.length=0;h.c.savePreferences=async()=>{throw new Error('Disk unavailable');};
   await assert.rejects(h.c.window.__nativeInvoke('handoff',{ticket:'failed',threadId:'new-local-thread',draft:{text:'keep this',attachments:[],mentions:[]}}),/Disk unavailable/);assert.equal(h.sent.length,0);
 });
+
+test('popping out a reference-only draft transfers and acknowledges its file mentions',async()=>{
+  const h=handoffClient('main');h.input.value='';h.c.desktopAttachments=[];h.c.mentionedFiles=['notes.md'];const pending=h.c.nativePopout();await queued();
+  assert.equal(h.sent[0].__window,'popout');assert.deepEqual(h.sent[0].draft.mentions,['notes.md']);
+  await h.c.window.__nativeInvoke('handoffComplete',{ticket:h.sent[0].ticket});await pending;assert.equal(h.c.mentionedFiles.length,0);
+});
+test('navigation during draft persistence does not open or transfer another chat',async()=>{
+  const h=handoffClient('main');let resolve;h.c.savePreferences=()=>new Promise(done=>resolve=done);
+  const pending=h.c.nativePopout();await queued();h.c.currentThread='another-chat';h.c.desktop.navigation++;h.input.value='another draft';resolve();
+  await assert.rejects(pending,/chat changed/);assert.equal(h.sent.length,0);assert.equal(h.input.value,'another draft');
+});

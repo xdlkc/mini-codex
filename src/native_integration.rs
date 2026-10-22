@@ -10,6 +10,14 @@ pub(super) enum ShortcutAction {
     Capture,
 }
 static HANDLER: OnceLock<Box<dyn Fn(ShortcutAction) + Send + Sync>> = OnceLock::new();
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+pub(super) fn request_screen_capture_access() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() }
+}
 #[repr(C)]
 struct EventType {
     class: u32,

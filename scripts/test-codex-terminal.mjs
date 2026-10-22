@@ -100,3 +100,16 @@ test('shell OSC titles follow the reference cwd-prefix rules without changing fi
   assert.equal(w.document.querySelector('fixture'),null);session.term.changeTitle('build');w.codexTerminalRemember({...plain(session.state),sequence:1},session.context);assert.equal(w.document.querySelector('[role=tab]').textContent,'build');
   await w.codexTerminalCreate(w.codexTerminalCapture(),{name:'Saved action',command:'build'});await tick();h.session().term.changeTitle('/repo: shell replacement');assert.equal(w.document.querySelector('[role=tab][aria-selected=true]').textContent,'Saved action');
 });
+
+test('closing Terminal before its session list arrives does not create a PTY or reopen the inspector',async t=>{
+  const h=harness(t),w=h.w;let resolve;h.handler=method=>method==='terminal/list'?new Promise(done=>resolve=done):undefined;
+  const opening=w.codexTerminalRender();await tick();w.drawerOpen=false;resolve({data:[]});await opening;
+  assert.equal(w.drawerOpen,false);assert.equal(h.calls.filter(c=>c.method==='terminal/create').length,0);
+});
+test('a pending new terminal preserves a subsequent Files selection and remains available on return',async t=>{
+  const h=harness(t),w=h.w;await w.codexTerminalRender();await tick();let resolve;const state={id:'delayed-pty',host:'alpha',cwd:'/repo',threadId:'chat-a',title:'Delayed terminal',status:'running',sequence:0,output:''};
+  h.handler=method=>method==='terminal/create'?new Promise(done=>resolve=done):undefined;
+  const opening=w.document.querySelector('[aria-label="New terminal"]').onclick();await tick();w.currentDrawerTab='files';w.document.querySelector('#drawer-content').textContent='Files view';h.records.set(state.id,state);resolve({terminal:state});await opening;
+  assert.equal(w.currentDrawerTab,'files');assert.equal(w.document.querySelector('#drawer-content').textContent,'Files view');assert.equal(h.sessions().size,2);
+  h.handler=null;w.currentDrawerTab='terminal';await w.codexTerminalRender();await tick();assert.equal(w.document.querySelector('[role=tab][aria-selected=true]').textContent,'Delayed terminal');
+});

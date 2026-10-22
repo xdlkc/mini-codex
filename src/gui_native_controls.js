@@ -3,12 +3,15 @@ const nativeHandoffs=new Map();
 function nativeWindowRequest(action,fields={}){if(action==='capture')nativeCaptureContext={threadId:currentThread,mode:desktop.mode,navigation:desktop.navigation};rpcSend({__window:action,...fields});}
 async function nativeOpenMain(target='main'){
   if(filesUi.importing)throw new Error('Wait for the file import to finish.');
-  saveDraft();await savePreferences({drafts:Object.fromEntries(desktop.drafts)});
+  saveDraft();
+  const navigation=desktop.navigation,key=draftKey(),threadId=currentThread;
   const draft={text:$('composer-input').value,attachments:desktopAttachments.map(file=>({...file})),mentions:[...mentionedFiles],mode:desktop.mode,cwd:currentCwd,model:currentModel,projectId:desktop.projectId};
-  if(!draft.text&&!draft.attachments.length){nativeWindowRequest(target,{threadId:currentThread,mode:desktop.mode});return;}
+  await savePreferences({drafts:Object.fromEntries(desktop.drafts)});
+  if(navigation!==desktop.navigation||key!==draftKey())throw new Error('The chat changed while saving. Try opening the window again.');
+  if(!draft.text&&!draft.attachments.length&&!draft.mentions.length){nativeWindowRequest(target,{threadId,mode:draft.mode});return;}
   if(nativeHandoffs.size)return;
-  const ticket=crypto.randomUUID(),key=draftKey(),fingerprint=JSON.stringify(draft);
-  return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{nativeHandoffs.delete(ticket);reject(new Error('The other window did not confirm saving this draft. Your original draft is kept.'));},30000);nativeHandoffs.set(ticket,{resolve,reject,timer,key,fingerprint,draft});nativeWindowRequest(target,{threadId:currentThread,draft,ticket});});
+  const ticket=crypto.randomUUID(),fingerprint=JSON.stringify(draft);
+  return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{nativeHandoffs.delete(ticket);reject(new Error('The other window did not confirm saving this draft. Your original draft is kept.'));},30000);nativeHandoffs.set(ticket,{resolve,reject,timer,key,fingerprint,draft});nativeWindowRequest(target,{threadId,draft,ticket});});
 }
 function nativePopout(){
   if(typeof remoteContext==='function'&&remoteContext())throw new Error('Open a local chat to pop it out.');

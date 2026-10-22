@@ -1075,6 +1075,7 @@ let drawerContentRequest=0,settingsRenderRequest=0,executionModalRevision=0;
 let latestGitStatus = null;
 let latestGitStatusContext = null;
 let activeFloatingMenuKey = null;
+let activeFloatingMenuAnchor = null;
 const itemEls = new Map();
 const itemTexts = new Map();
 
@@ -2083,6 +2084,7 @@ function closeFloatingMenu() {
   const menu = document.getElementById("floating-menu");
   menu.classList.remove("open");
   activeFloatingMenuKey = null;
+  activeFloatingMenuAnchor = null;
 }
 
 function openFloatingMenuAt(key, anchorEl, html, preferAbove = true) {
@@ -2092,6 +2094,7 @@ function openFloatingMenuAt(key, anchorEl, html, preferAbove = true) {
     return;
   }
   activeFloatingMenuKey = key;
+  activeFloatingMenuAnchor = anchorEl;
   menu.innerHTML = html;
   menu.classList.add("open");
   const rect = anchorEl.getBoundingClientRect();
@@ -2105,7 +2108,7 @@ function openFloatingMenuAt(key, anchorEl, html, preferAbove = true) {
 
 document.addEventListener("mousedown", e => {
   const menu = document.getElementById("floating-menu");
-  if (menu.classList.contains("open") && !menu.contains(e.target) && !e.target.closest(".composer-chip-btn, .hero-sub, #openin-btn")) {
+  if (menu.classList.contains("open") && !menu.contains(e.target) && !activeFloatingMenuAnchor?.contains(e.target) && !e.target.closest(".composer-chip-btn, .hero-sub, #openin-btn")) {
     closeFloatingMenu();
   }
 });
@@ -2283,23 +2286,31 @@ window.selectSandbox = async function(sb) {
 
 async function toggleOpenInMenu(e) {
   e.stopPropagation();
-  const anchor = e.currentTarget;
-  if (!openInApps.length) {
+  const anchor = e.currentTarget, execution = captureExecutionUi();
+  openFloatingMenuAt("openin", anchor, '<div class="menu-section-title">Loading apps…</div>', false);
+  const menu = document.getElementById("floating-menu");
+  const loading = menu.firstChild;
+  const current = () => activeFloatingMenuKey === "openin" && menu.classList.contains("open") && menu.firstChild === loading && executionUiCurrent(execution);
+  if (!current()) return;
+  try {
     const r = await rpcCall("openIn/list", {});
-    openInApps = r.apps || [];
-  }
-  const html = `<div class="menu-section-title">Open ${escapeHtml(baseName(currentCwd))} in…</div>` +
+    if (!current()) return;
+    openInApps = r.targets || [];
+    menu.innerHTML = `<div class="menu-section-title">Open ${escapeHtml(baseName(execution.cwd))} in…</div>` +
     openInApps.map(a => `<button class="menu-item" ${uiActionAttrs("open-in", a.id)}>
       <div class="menu-item-left">
         <span class="menu-item-title">${escapeHtml(a.label)}</span>
       </div>
-    </button>`).join("");
-  openFloatingMenuAt("openin", anchor, html, false);
+    </button>`).join("") + (!openInApps.length ? `<div class="menu-section-title">${escapeHtml(r.reason || "No supported apps found")}</div>` : "");
+    bindExecutionElements(menu, execution);
+  } catch (error) {
+    if (current()) menu.innerHTML = `<div class="menu-section-title">${escapeHtml(error.message || "Could not load apps")}</div>`;
+  }
 }
 
 window.launchOpenIn = async function(appId) {
   closeFloatingMenu();
-  await rpcCall("openIn/open", { app: appId, path: currentCwd });
+  await rpcCall("openIn/open", { target: appId, path: currentCwd });
 };
 
 function toggleSidebar() {
@@ -2335,14 +2346,17 @@ function toggleDrawer(tab) {
 }
 function closeDrawer() {
   drawerOpen = false;
+  drawerContentRequest++;
   document.getElementById("inspector-drawer").classList.add("closed");
 }
-function switchDrawerTab(tab) {
+async function switchDrawerTab(tab) {
   currentDrawerTab = tab;
   ["diff", "files", "terminal"].forEach(t => {
     document.getElementById("tab-btn-" + t)?.classList.toggle("active", t === tab);
   });
-  renderDrawerContent();
+  const execution = captureExecutionUi();
+  try { await renderDrawerContent(); }
+  catch (error) { if (drawerOpen && currentDrawerTab === tab && executionUiCurrent(execution)) reportUiActionError(error); }
 }
 
 async function renderDrawerContent() {
@@ -2350,8 +2364,11 @@ async function renderDrawerContent() {
   const current=()=>ticket===drawerContentRequest&&tab===currentDrawerTab&&executionUiCurrent(execution);
   const box = document.getElementById("drawer-content");
   if (currentDrawerTab === "diff") {
-    const st = (latestGitStatusContext===execution.key+'\0'+execution.cwd?latestGitStatus:null) || await execution.call("workspace/gitStatus", { cwd: execution.cwd || undefined });
+    box.innerHTML = '<div class="empty-note">Loading changes…</div>';
+    const st = await execution.call("workspace/gitStatus", { cwd: execution.cwd || undefined });
     if(!current())return;latestGitStatus = st;latestGitStatusContext=execution.key+'\0'+execution.cwd;
+    document.getElementById("top-diff-add").textContent = '+' + (st.totalAdded || 0);
+    document.getElementById("top-diff-del").textContent = '-' + (st.totalDeleted || 0);
     const files = st.changedFiles || [];
     if (files.length === 0 && !st.diff) {
       box.innerHTML = `<div style="color:var(--text-tertiary);padding:24px 8px;text-align:center">Working tree clean · No uncommitted changes</div>`;
@@ -2368,9 +2385,10 @@ async function renderDrawerContent() {
       ${listHtml}
       <div class="code-block-wrap" style="margin-top:10px"><pre class="code-block-pre" style="font-size:11.5px;white-space:pre-wrap">${renderColoredDiff(st.diff || "")}</pre></div>`;
   } else if (currentDrawerTab === "files") {
+    box.innerHTML = '<div class="empty-note">Loading files…</div>';
     const res = await execution.call("fs/readDirectory", { cwd: execution.cwd || undefined, query: "" });
     if(!current())return;const files = res.files || [];
-    box.innerHTML = `<div style="margin-bottom:8px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px">${escapeHtml(res.cwd || currentCwd)}</div>` +
+    box.innerHTML = `<div style="margin-bottom:8px;color:var(--text-tertiary);font-family:var(--font-mono);font-size:11px">${escapeHtml(res.cwd || currentCwd)}</div>` + (!files.length ? '<div class="empty-note">No workspace files found</div>' : '') +
       files.map(f => `<div class="ac-item" ${uiActionAttrs("preview-file", f.path)}>
         <span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(f.path)}</span>
         <button class="thread-act-btn" title="Mention @file" ${uiActionAttrs("mention-file", f.path)}>@</button>

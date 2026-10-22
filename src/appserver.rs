@@ -2587,23 +2587,41 @@ impl Server {
                 }
                 "openIn/list" => Ok(json!({"targets": detect_open_in_targets()})),
                 "openIn/open" => {
-                    let target = p["target"].as_str().unwrap_or("finder");
-                    let path = p["path"].as_str().unwrap_or(".");
-                    let app_name = match target {
-                        "finder" => "Finder",
-                        "terminal" => "Terminal",
-                        "iterm" => "iTerm",
-                        "antigravity" => "Antigravity",
-                        "cursor" => "Cursor",
-                        "vscode" => "Visual Studio Code",
-                        "windsurf" => "Windsurf",
-                        "zed" => "Zed",
-                        "xcode" => "Xcode",
-                        other => other,
+                    let target = p["target"].as_str().ok_or_else(|| err("target"))?;
+                    let app = detect_open_in_targets()
+                        .into_iter()
+                        .find(|app| app["id"] == target)
+                        .ok_or_else(|| {
+                            err("The selected app is not installed. Reopen the Open menu.")
+                        })?;
+                    let path = p["path"]
+                        .as_str()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| self.shared.default_cwd.clone());
+                    let path = if path.is_absolute() {
+                        path
+                    } else {
+                        self.shared.default_cwd.join(path)
                     };
-                    let _ = std::process::Command::new("/usr/bin/open")
-                        .args(["-a", app_name, path])
-                        .spawn();
+                    let path = path
+                        .canonicalize()
+                        .map_err(|error| (-32000, format!("Could not open workspace: {error}")))?;
+                    let output = tokio::process::Command::new("/usr/bin/open")
+                        .args(["-a", app["appName"].as_str().unwrap()])
+                        .arg(path)
+                        .output()
+                        .await
+                        .map_err(|error| (-32000, format!("Could not launch app: {error}")))?;
+                    if !output.status.success() {
+                        return Err((
+                            -32000,
+                            format!(
+                                "Could not open workspace in {}: {}",
+                                app["label"].as_str().unwrap(),
+                                String::from_utf8_lossy(&output.stderr).trim()
+                            ),
+                        ));
+                    }
                     Ok(json!({"ok": true}))
                 }
                 "settings/read" => {

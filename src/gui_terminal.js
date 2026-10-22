@@ -6,6 +6,7 @@ const codexTerminalId=(host,id)=>JSON.stringify([host,id]);
 function codexTerminalCapture(){const context=workspaceCapture();return {...context,host:codexTerminalHost(),cwd:currentCwd,threadId:currentThread};}
 function codexTerminalKey(context){return JSON.stringify([context.host,context.key,codexEnvPath(context.cwd),context.threadId]);}
 function codexTerminalCurrent(context){return desktop.mode==='codex'&&workspaceCurrent(context)&&context.host===codexTerminalHost()&&codexEnvPath(context.cwd)===codexEnvPath(currentCwd)&&context.threadId===currentThread;}
+function codexTerminalPanelCurrent(context,view=codexTerminalUi.view){return drawerOpen&&currentDrawerTab==='terminal'&&view===codexTerminalUi.view&&codexTerminalUi.root?.isConnected&&codexTerminalCurrent(context);}
 async function codexTerminalRestoreHost(){
   const context=codexTerminalCapture(),key=JSON.stringify([context.host,context.key]);if(codexTerminalUi.restored.has(key))return;codexTerminalUi.restored.add(key);
   try{const result=await context.call('terminal/list');for(const state of result.data||[])codexTerminalRemember(state,{...context,cwd:state.cwd,threadId:state.threadId});}
@@ -75,7 +76,7 @@ function codexTerminalHandleKey(session,event){
   const plainMeta=event.metaKey&&!event.ctrlKey&&!event.altKey&&!event.shiftKey;
   const apple=/Mac|iPhone|iPad/i.test(navigator.platform||navigator.userAgent),plainCommand=plainMeta||!apple&&event.ctrlKey&&!event.metaKey&&!event.altKey&&!event.shiftKey;
   const consume=()=>{event.preventDefault();event.stopPropagation();return false;};
-  if(plainCommand&&event.key==='t'){codexTerminalCreate(session.context).catch(showError);return consume();}
+  if(plainCommand&&event.key==='t'){codexTerminalCreate(session.context,null,codexTerminalUi.view).catch(showError);return consume();}
   if(plainCommand&&event.key.toLowerCase()==='k'){session.term.clear();return consume();}
   const controls={ArrowLeft:'\u0001',ArrowUp:'\u0001',ArrowRight:'\u0005',ArrowDown:'\u0005',Backspace:'\u0015',Delete:'\u000b'};
   if(plainMeta&&controls[event.key]){codexTerminalWrite(session,controls[event.key]);return consume();}
@@ -87,7 +88,7 @@ function codexTerminalHandleKey(session,event){
   return true;
 }
 function codexTerminalShow(session){
-  const root=codexTerminalUi.root;if(!root?.isConnected||!codexTerminalCurrent(session.context))return;
+  const root=codexTerminalUi.root;if(!codexTerminalPanelCurrent(session.context))return;
   const viewport=root.querySelector('.codex-terminal-viewport');
   if(!session.term){
     const container=document.createElement('div');container.className='codex-terminal-surface';session.container=container;
@@ -103,26 +104,27 @@ function codexTerminalShow(session){
   session.term.options.theme=codexTerminalTheme();requestAnimationFrame(()=>{codexTerminalFit(session);session.term.focus();});
   const state=root.querySelector('.codex-terminal-status');state.textContent=session.state.status==='running'?'':codexTerminalText('Terminal exited','终端已退出')+(session.state.exitCode!=null?' ('+session.state.exitCode+')':'');
 }
-async function codexTerminalCreate(context=codexTerminalCapture(),action=null){
+async function codexTerminalCreate(context=codexTerminalCapture(),action=null,view=null){
   if(!codexTerminalCurrent(context))return;
   const result=await context.call('terminal/create',{cwd:context.cwd,threadId:context.threadId,...(action?{command:action.command,title:action.name}:{})});
   const session=codexTerminalRemember(result.terminal,context);if(!session||!codexTerminalCurrent(context))return session;
   context.call('terminal/status',{id:session.state.id}).then(result=>codexTerminalRemember(result.terminal,context)).catch(()=>{});
   codexTerminalUi.selected.set(codexTerminalKey(context),session.key);
+  if(view!==null&&!codexTerminalPanelCurrent(context,view))return session;
   if(!drawerOpen||currentDrawerTab!=='terminal')toggleDrawer('terminal');
   else {codexTerminalPaintTabs();codexTerminalShow(session);}return session;
 }
 async function codexTerminalRender(){
   const context=codexTerminalCapture(),ticket=++codexTerminalUi.view,box=$('drawer-content');
   const root=document.createElement('section');root.id='codex-terminal-panel';
-  const toolbar=document.createElement('div');toolbar.className='codex-terminal-toolbar';const tabs=document.createElement('div');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',codexTerminalText('Terminals','终端'));const add=document.createElement('button');add.type='button';add.className='icon-btn';add.textContent='+';add.setAttribute('aria-label',codexTerminalText('New terminal','新终端'));add.onclick=async()=>{add.disabled=true;try{await codexTerminalCreate(context);}catch(error){showError(error);}finally{add.disabled=false;}};toolbar.append(tabs,add);
+  const toolbar=document.createElement('div');toolbar.className='codex-terminal-toolbar';const tabs=document.createElement('div');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',codexTerminalText('Terminals','终端'));const add=document.createElement('button');add.type='button';add.className='icon-btn';add.textContent='+';add.setAttribute('aria-label',codexTerminalText('New terminal','新终端'));add.onclick=async()=>{add.disabled=true;try{await codexTerminalCreate(context,null,ticket);}catch(error){showError(error);}finally{add.disabled=false;}};toolbar.append(tabs,add);
   const viewport=document.createElement('div');viewport.className='codex-terminal-viewport';const status=document.createElement('div');status.className='codex-terminal-status';status.setAttribute('role','status');root.append(toolbar,viewport,status);box.replaceChildren(root);codexTerminalUi.root=root;codexTerminalUi.context=context;
   try{
     const result=await context.call('terminal/list',{cwd:context.cwd,threadId:context.threadId});
-    if(ticket!==codexTerminalUi.view||!codexTerminalCurrent(context)||!root.isConnected)return;
+    if(!codexTerminalPanelCurrent(context,ticket))return;
     for(const state of result.data||[])codexTerminalRemember(state,context);
     codexTerminalPaintTabs();let session=codexTerminalUi.sessions.get(codexTerminalUi.selected.get(codexTerminalKey(context)));
-    if(!session)session=await codexTerminalCreate(context);if(session&&ticket===codexTerminalUi.view)codexTerminalShow(session);
+    if(!session)session=await codexTerminalCreate(context,null,ticket);if(session&&codexTerminalPanelCurrent(context,ticket))codexTerminalShow(session);
   }catch(error){if(ticket===codexTerminalUi.view&&codexTerminalCurrent(context)){status.textContent=error.message;const retry=document.createElement('button');retry.className='btn-pill';retry.textContent=codexTerminalText('Retry','重试');retry.onclick=()=>codexTerminalRender();status.append(retry);}}
 }
 const codexTerminalBaseDrawer=renderDrawerContent;

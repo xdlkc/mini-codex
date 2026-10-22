@@ -53,6 +53,7 @@ function harness() {
   };
   vm.runInContext('projectsList = fixtures.projects; modelCatalog = fixtures.models; currentModel = fixtures.models[0].model; openInApps = fixtures.apps;', context);
   context.rpcCall = async method => {
+    if (method === 'openIn/list') return { targets: context.fixtures.apps };
     if (method === 'settings/read') return { mcpServers: [{ name: payload }] };
     if (method === 'fs/readDirectory') return { cwd: '/tmp', files: [{ path: `/tmp/${payload}` }] };
     if (method === 'fs/readFile') return { content: 'File content' };
