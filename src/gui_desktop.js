@@ -307,11 +307,17 @@ async function openSearch(){
 }
 function hideLibrary(){$('work-library').classList.add('hidden');desktop.library=false;$('composer-host').style.display='';}
 async function showLibrary(){
+  const ticket=++desktop.navigation;saveDraft();await flushDocument();if(ticket!==desktop.navigation)return;
   closeSettingsView();$('nav-home').classList.remove('active');$('nav-library')?.classList.add('active');desktop.library=true;$('home-hero').classList.add('hidden');$('conversation-wrap').classList.add('hidden');$('composer-host').style.display='none';$('work-library').classList.remove('hidden');$('topbar-title').textContent='Library';
-  const r=await rpcLocalCall('desktop/document/list');const root=$('work-library');root.innerHTML='<div class="library-shell"><div class="library-header"><h1>Library</h1><button class="btn-pill primary" id="library-new">+ New document</button></div><div class="library-grid" id="library-grid"></div></div>';
+  if(typeof syncShellNavigation==='function')syncShellNavigation();
+  const r=await rpcLocalCall('desktop/document/list',{});if(ticket!==desktop.navigation||!desktop.library)return;
+  const root=$('work-library');root.innerHTML='<div class="library-shell"><div class="library-header"><h1>Library</h1><button class="btn-pill primary" id="library-new">+ New document</button></div><div class="library-grid" id="library-grid"></div></div>';
   $('library-new').onclick=()=>createDocument();
-  for(const doc of r.items||[]){const b=document.createElement('button');b.className='document-card';b.innerHTML=`<span style="font-size:22px">${uiIcon(doc.kind)}</span><strong>${escapeHtml(doc.title)}</strong><small>${new Date(doc.updatedAt).toLocaleDateString()} · ${doc.kind==='code'?'Code':'Document'}</small>`;b.onclick=()=>openDocument(doc.id,{layout:'page'}).catch(showError);$('library-grid').append(b);}
+  renderLibraryDocuments($('library-grid'),r.items||[]);
   if(!r.items?.length)$('library-grid').innerHTML='<div class="empty-note">Documents you create will appear here.</div>';
+}
+function renderLibraryDocuments(root,items){
+  for(const doc of items){const b=document.createElement('button');b.className='document-card';b.innerHTML=`<span style="font-size:22px">${uiIcon(doc.kind)}</span><strong>${escapeHtml(doc.title)}</strong><small>${new Date(doc.updatedAt).toLocaleDateString()} · ${doc.kind==='code'?'Code':'Document'}</small>`;b.onclick=()=>openDocument(doc.id,{layout:'page'}).catch(showError);root.append(b);}
 }
 async function createDocument(content='',title='Untitled document'){
   const r=await rpcCall('desktop/document/create',{title,content,kind:'document',projectId:desktop.projectId});await openDocument(r.document.id);
@@ -342,17 +348,19 @@ closeDrawer=function(){desktop.documentNavigation++;flushDocument().catch(showEr
 const baseRenderDrawer=renderDrawerContent;
 renderDrawerContent=async function(){if(currentDrawerTab==='document'){if(desktop.document)await openDocument(desktop.document.id);}else{await flushDocument();$('inspector-drawer').classList.remove('document-open');await baseRenderDrawer();}};
 const baseOpenSettings=openSettingsView;
-openSettingsView=async function(section='general'){await flushDocument();hideLibrary();$('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');document.body.classList.add('in-settings');desktop.documentNavigation++;baseCloseDrawer();await baseOpenSettings(section);};
+openSettingsView=async function(section='general'){const ticket=++desktop.navigation;await flushDocument();if(ticket!==desktop.navigation)return;hideLibrary();$('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');document.body.classList.add('in-settings');desktop.documentNavigation++;baseCloseDrawer();currentSettingsSection=section;$('settings-body').innerHTML='<p class="settings-sub">Loading…</p>';if(typeof syncShellNavigation==='function')syncShellNavigation();await baseOpenSettings(section);};
 const baseCloseSettings=closeSettingsView;
 closeSettingsView=function(){document.body.classList.remove('in-settings');baseCloseSettings();};
 const baseHandleComposerInput=handleComposerInput;
 handleComposerInput=async function(){if(desktop.mode==='chat'){autoResizeInput();closeAutocomplete();return;}await baseHandleComposerInput();};
 const baseRenderSettings=renderSettingsSection;
 renderSettingsSection=async function(section){
+  const execution=captureExecutionUi(),ticket=++settingsRenderRequest;
+  const current=()=>ticket===settingsRenderRequest&&section===currentSettingsSection&&executionUiCurrent(execution);
   currentSettingsSection=section;document.querySelectorAll('.settings-nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.sec===section));
   const box=$('settings-body');
   if(section==='general'){
-    const r=await rpcCall('openIn/list');openInApps=r.targets||[];
+    const r=await rpcCall('openIn/list');if(!current())return;openInApps=r.targets||[];
     box.innerHTML=`<h1 class="settings-h1">General</h1><div class="settings-card"><div class="settings-row"><div><div class="settings-row-label">Default editor</div><div class="settings-row-desc">Preferred app for opening a workspace.</div></div><select id="default-editor" class="settings-select" aria-label="Default editor">${openInApps.map(a=>`<option value="${escapeHtml(a.id)}">${escapeHtml(a.label)}</option>`).join('')}</select></div><div class="settings-row"><div><div class="settings-row-label">Workspace folder</div><div class="settings-row-desc">${escapeHtml(currentCwd)}</div></div><button class="btn-pill" id="change-workspace">Change folder…</button></div></div>`;
     $('default-editor').value=desktop.state.settings.preferences.openIn||openInApps[0]?.id||'';
     $('default-editor').onchange=async e=>{await savePreferences({openIn:e.target.value});toast('Default editor saved');};$('change-workspace').onclick=()=>openCreateProjectDialog('existing');return;
@@ -363,14 +371,14 @@ renderSettingsSection=async function(section){
     $('theme-select').value=theme;$('theme-select').onchange=async e=>{applyTheme(e.target.value);await savePreferences({theme:e.target.value});};return;
   }
   if(section==='archived'){
-    const r=await rpcCall('thread/list',{archived:true,limit:200});box.innerHTML='<h1 class="settings-h1">Archived chats</h1><div id="archived-list"></div>';
+    const r=await rpcCall('thread/list',{archived:true,limit:200});if(!current())return;box.innerHTML='<h1 class="settings-h1">Archived chats</h1><div id="archived-list"></div>';
     for(const t of r.data||[]){const row=document.createElement('div');row.className='capability-row';const title=document.createElement('span');title.textContent=t.name||t.preview||'New chat';const restore=document.createElement('button');restore.className='btn-pill';restore.textContent='Restore';restore.onclick=async()=>{await rpcCall('thread/unarchive',{threadId:t.id});await renderSettingsSection('archived');await refreshThreads();};row.append(title,restore);$('archived-list').append(row);}if(!r.data?.length)$('archived-list').innerHTML='<div class="empty-note">No archived chats</div>';return;
   }
   if(section==='shortcuts'){
     box.innerHTML='<h1 class="settings-h1">Keyboard shortcuts</h1>'+[['New chat','⌘N'],['Search','⌘K'],['Toggle sidebar','⌘S'],['Settings','⌘,'],['Switch workspace','⌘1 / ⌘2 / ⌘3'],['Send message','Enter'],['New line','Shift + Enter'],['Close menu','Esc']].map(([name,key])=>`<div class="capability-row"><span>${name}</span><kbd>${key}</kbd></div>`).join('');return;
   }
   if(section==='capabilities'){
-    const state=await loadDesktop();box.innerHTML='<h1 class="settings-h1">Features & connections</h1><p class="settings-sub">Features available on this computer. Services that need a separate connection are listed below.</p>';
+    const state=await loadDesktop();if(!current())return;box.innerHTML='<h1 class="settings-h1">Features & connections</h1><p class="settings-sub">Features available on this computer. Services that need a separate connection are listed below.</p>';
     for(const [key,feature] of Object.entries(state.capabilities)){const row=document.createElement('div');row.className='capability-row';row.innerHTML=`<div>${escapeHtml(key.replace(/([A-Z])/g,' $1'))}<small>${escapeHtml(feature.reason||'Available on this computer')}</small></div><span class="${feature.available?'status-available':'status-unavailable'}">${feature.available?'Available':'Not connected'}</span>`;box.append(row);}return;
   }
   if(section==='personalization'&&desktop.mode!=='codex'){
@@ -378,7 +386,7 @@ renderSettingsSection=async function(section){
     $('custom-instructions-save').onclick=async()=>{await savePreferences({customInstructions:$('custom-instructions').value});toast('Instructions saved');};return;
   }
   if(section==='account'){
-    const r=await rpcCall('account/read');box.innerHTML=`<h1 class="settings-h1">Account</h1><div class="settings-card"><div class="settings-row"><div><div class="settings-row-label">${r.account?.type==='chatgpt'?'ChatGPT':r.account?.type==='apiKey'?'OpenAI API':'Not signed in'}</div><div class="settings-row-desc">${r.account?'Credentials are available on this computer.':'Run mcodex login or set OPENAI_API_KEY to send messages.'}</div></div></div><p class="settings-sub">Subscription details are not available through this connection.</p>`;return;
+    const r=await rpcCall('account/read');if(!current())return;box.innerHTML=`<h1 class="settings-h1">Account</h1><div class="settings-card"><div class="settings-row"><div><div class="settings-row-label">${r.account?.type==='chatgpt'?'ChatGPT':r.account?.type==='apiKey'?'OpenAI API':'Not signed in'}</div><div class="settings-row-desc">${r.account?'Credentials are available on this computer.':'Run mcodex login or set OPENAI_API_KEY to send messages.'}</div></div></div><p class="settings-sub">Subscription details are not available through this connection.</p>`;return;
   }
   await baseRenderSettings(section);
   if(section==='configuration'){const b=document.createElement('button');b.className='btn-pill';b.textContent='Set model ID';b.onclick=()=>{openCustomModal('Set model ID','<input id=custom-model-id class=modal-input aria-label="Model ID" placeholder="Model ID from your provider"/><button id=custom-model-save class="btn-pill primary">Save</button>');$('custom-model-save').onclick=async()=>{const id=$('custom-model-id').value.trim();if(!id)return;await selectModel(id);const r=await rpcCall('model/list');modelCatalog=r.data;closeModal();await renderSettingsSection('configuration');};};box.append(b);}

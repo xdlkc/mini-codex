@@ -19,7 +19,7 @@ function syncHiddenPanels(){
 function syncShellNavigation(){
   if(!$('desktop-app-rail'))return;
   const inSettings=document.body.classList.contains('in-settings'),inScheduled=document.body.classList.contains('in-scheduled');
-  const selected=inSettings?(currentSettingsSection==='git'&&desktop.mode==='codex'?'git':currentSettingsSection==='skills'?'apps':'more'):inScheduled?'scheduled':desktop.library?'library':'home';
+  const selected=inSettings?(currentSettingsSection==='git'&&desktop.mode==='codex'?'git':currentSettingsSection==='skills'?'apps':currentSettingsSection==='account'?'account':'more'):inScheduled?'scheduled':desktop.library?'library':'home';
   document.querySelectorAll('[data-rail-view]').forEach(button=>{button.classList.toggle('active',button.dataset.railView===selected);if(button.dataset.railView===selected)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');});
   $('desktop-mode-name').textContent=desktop.mode==='chat'?'ChatGPT':titleCase(desktop.mode);
   $('desktop-mode-button').setAttribute('aria-label','Workspace: '+(desktop.mode==='chat'?'ChatGPT':titleCase(desktop.mode)));
@@ -56,13 +56,13 @@ const shellReady=Promise.all([desktopReady,scheduledUiReady]).then(()=>{
   const drag=document.createElement('div');drag.className='rail-drag';drag.onmousedown=maybeDragWindow;rail.append(drag);
   const add=(view,label,action)=>{const button=document.createElement('button');button.className='rail-button';button.dataset.railView=view;button.title=label;button.setAttribute('aria-label',label);button.innerHTML=shellSvg(view);button.onclick=()=>Promise.resolve().then(action).catch(showError);rail.append(button);return button;};
   add('home','Home',()=>newThread());
-  add('library','Library',async()=>{if(desktop.mode!=='work')await switchMode('work');await showLibrary();});
+  add('library','Library',()=>showLibrary());
   add('scheduled','Scheduled',()=>openScheduledView());
   add('git','Worktrees',()=>openSettingsView('git')).classList.add('codex-only');
   add('apps','Skills & plugins',()=>openSettingsView('skills'));
   add('more','Settings',()=>openSettingsView('general'));
   const spacer=document.createElement('div');spacer.className='rail-spacer';rail.append(spacer);
-  const account=document.createElement('button');account.className='rail-account';account.setAttribute('aria-label','Account');account.title='Account';account.textContent=$('account-avatar').textContent||'M';account.onclick=()=>openSettingsView('account').catch(showError);rail.append(account);
+  const account=document.createElement('button');account.className='rail-account';account.dataset.railView='account';account.setAttribute('aria-label','Account');account.title='Account';account.textContent=$('account-avatar').textContent||'M';account.onclick=()=>openSettingsView('account').catch(showError);rail.append(account);
   $('app').prepend(rail);
   const header=document.createElement('div');header.className='desktop-mode-header';
   const mode=document.createElement('button');mode.id='desktop-mode-button';mode.className='desktop-mode-button';mode.setAttribute('aria-haspopup','menu');mode.setAttribute('aria-expanded','false');mode.innerHTML='<span id="desktop-mode-name"></span><span class="mode-chevron" aria-hidden="true">⌄</span>';mode.onclick=openDesktopModeMenu;mode.onmousedown=event=>event.stopPropagation();mode.onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();openDesktopModeMenu(event);}};

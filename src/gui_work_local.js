@@ -65,10 +65,9 @@ async function docsWorkHeader(session){
 }
 const docsLocalOpen=openDocument;
 openDocument=async function(...args){const result=await docsLocalOpen(...args);if(documentsUi.current)await docsWorkHeader(documentsUi.current);return result;};
-const docsLocalLibrary=showLibrary;
-showLibrary=async function(...args){const result=await docsLocalLibrary(...args),root=$('library-grid');if(!root||!desktop.library)return result;const ticket=desktop.navigation,listed=await rpcLocalCall('desktop/document/list',desktop.projectId?{projectId:desktop.projectId}:{});if(ticket!==desktop.navigation||!root.isConnected)return result;
-  const records=listed.items||[],byParent=new Map();for(const item of records){const key=item.parentId||'';if(!byParent.has(key))byParent.set(key,[]);byParent.get(key).push(item);}root.replaceChildren();root.classList.add('local-page-tree');
-  const visited=new Set();const render=(parent,depth)=>{for(const page of byParent.get(parent)||[]){if(visited.has(page.id))continue;visited.add(page.id);const button=docsButton(page.title,()=>openDocument(page.id),'local-page-link');button.style.paddingLeft=(14+depth*20)+'px';button.setAttribute('aria-label',(depth?'Subpage: ':'Page: ')+page.title);root.append(button);render(page.id,depth+1);}};render('',0);for(const page of records)if(!visited.has(page.id))root.append(docsButton(page.title,()=>openDocument(page.id),'local-page-link'));return result;
+renderLibraryDocuments=function(root,records){
+  const byParent=new Map();for(const item of records){const key=item.parentId||'';if(!byParent.has(key))byParent.set(key,[]);byParent.get(key).push(item);}root.replaceChildren();root.classList.add('local-page-tree');
+  const visited=new Set();const render=(parent,depth)=>{for(const page of byParent.get(parent)||[]){if(visited.has(page.id))continue;visited.add(page.id);const button=docsButton(page.title,()=>openDocument(page.id),'local-page-link');button.style.paddingLeft=(14+depth*20)+'px';button.setAttribute('aria-label',(depth?'Subpage: ':'Page: ')+page.title);root.append(button);render(page.id,depth+1);}};render('',0);for(const page of records)if(!visited.has(page.id))root.append(docsButton(page.title,()=>openDocument(page.id),'local-page-link'));
 };
 const docsLocalChoice=docsToolRunChoice;
 docsToolRunChoice=function(snapshot,choice,range){

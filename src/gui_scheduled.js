@@ -39,7 +39,7 @@ async function openScheduledView(tab='scheduled') {
   $('scheduled-view').hidden=false;document.body.classList.add('in-scheduled');
   $('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');$('nav-scheduled').classList.add('active');
   $('topbar-title').textContent='Scheduled';$('scheduled-detail').hidden=true;
-  renderScheduledControls();await refreshScheduledView();
+  renderScheduledControls();if(typeof syncShellNavigation==='function')syncShellNavigation();await refreshScheduledView();
 }
 function renderScheduledControls() {
   $('scheduled-heading').textContent=scheduledUi.tab==='goals'?'Goals':'Scheduled';

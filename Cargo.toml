@@ -1,6 +1,6 @@
 [package]
 name = "mini-codex"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "A Rust re-implementation of the Codex CLI: TUI, Responses API, ChatGPT/API-key auth, MCP, sessions, plugins"
 

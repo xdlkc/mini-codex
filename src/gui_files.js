@@ -90,7 +90,7 @@ async function showFilesLibrary(){
   if(!result.data?.length){const note=document.createElement('p');note.className='empty-note';note.textContent='Imported files will appear here.';$('files-library-grid').append(note);}syncShellNavigation();
 }
 const filesBaseLibrary=showLibrary;
-showLibrary=async function(...args){filesUi.library=false;await filesBaseLibrary(...args);if(!desktop.library)return;document.querySelector('.library-header')?.append(fileAction('Files',()=>showFilesLibrary()));};
+showLibrary=async function(...args){filesUi.library=false;const work=filesBaseLibrary(...args),navigation=desktop.navigation;await work;if(navigation!==desktop.navigation||!desktop.library)return;document.querySelector('.library-header')?.append(fileAction('Files',()=>showFilesLibrary()));};
 const filesBaseTimeline=upsertTimelineItem;
 upsertTimelineItem=function(item){filesBaseTimeline(item);if(item.type!=='userMessage'||item.internal)return;const bubble=itemEls.get(item.id)?.querySelector('.msg-user-bubble');if(!bubble)return;
   for(const file of item.attachments||[]){if(!file.id||bubble.querySelector(`[data-attachment-id="${CSS.escape(file.id)}"]`))continue;const card=fileAction(file.name,()=>openAttachment(file.id),'message-file-card');card.dataset.attachmentId=file.id;bubble.append(card);}

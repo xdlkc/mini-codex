@@ -6,6 +6,7 @@
 .rail-button.active { background:var(--bg-active); color:var(--text-primary); }
 .rail-spacer { flex:1; }
 .rail-account { border:0; border-radius:50%; width:25px; height:25px; background:#bc4535; color:white; font-size:11px; cursor:pointer; }
+.rail-account.active { outline:2px solid var(--text-tertiary); outline-offset:3px; }
 .desktop-shell #sidebar { background:var(--bg-subtle); }
 .desktop-shell .sidebar-top { height:46px; min-height:46px; padding-left:36px; }
 .desktop-shell .mode-switcher,.desktop-shell #nav-search,.desktop-shell #nav-library,.desktop-shell #nav-scheduled,.desktop-shell .sidebar-footer { display:none; }
