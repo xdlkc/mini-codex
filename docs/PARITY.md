@@ -271,3 +271,8 @@ Fast 写入并发送 `priority`，Standard 清除覆盖；模型、强度和速�
 - `scripts/test-shell-navigation.mjs` 覆盖模式保持、账户选中、旧设置/资料库响应、保存期间离开设置、全局资料库项目上下文和单次目录树绘制。
 - `scripts/smoke-shell-navigation.py` 在真实浏览器和 Rust preview 中完成 3 轮七个入口切换（21 次完整检查）、7 次快速切换；模式、草稿、侧栏宽度和主区域边界保持稳定，始终只有一个主页面可见，资料库操作入口无重复。[截图](screenshots/27-sidebar-navigation.png)
 - 这些是功能导航验收，不代表所有功能、原生系统集成或 M 系列真机验收全部完成。
+
+## 2026-10-23 侧栏标题箭头对齐
+
+- 将工作台标题右侧的字体字符箭头替换为固定 12 × 12 px SVG，保持与标题在同一 flex 行中垂直居中，消除字形基线造成的下沉。
+- 真实浏览器测得 Codex 标题和箭头的垂直中心均为 y=70 px，差值 0 px。鼠标打开、ArrowDown 打开、Escape 关闭菜单均通过；嵌入脚本与 Codex chrome 的 12 项相关测试通过。[截图](screenshots/28-header-alignment.png)
