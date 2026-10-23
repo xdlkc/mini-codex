@@ -3,6 +3,28 @@ const desktop = { mode:'codex', state:null, threads:[], tabs:[], drafts:new Map(
 const $ = id => document.getElementById(id);
 const titleCase = text => text.charAt(0).toUpperCase()+text.slice(1);
 const uiIcon = name => ({chat:'◌',work:'▤',codex:'⌘',project:'▱',document:'▤',code:'⌘'}[name] || '◌');
+const automaticTitleCandidates=new Set(),automaticTitleRequests=new Set(),knownThreadTitles=new Map(),threadTitleRevisions=new Map();
+function restoreConversationTitle(){
+  if(desktop.library||desktop.document||document.body.classList.contains('in-settings')||document.body.classList.contains('in-scheduled'))return;
+  const thread=desktop.threads.find(thread=>thread.id===currentThread),tab=desktop.tabs.find(tab=>tab.id===currentThread);
+  $('topbar-title').textContent=currentThread?(knownThreadTitles.get(currentThread)||thread?.name||thread?.preview||tab?.title||'Chat'):titleCase(desktop.mode);
+  if(typeof codexUpdateDocumentTitle==='function')codexUpdateDocumentTitle();
+}
+function requestAutomaticTitle(threadId){
+  if(automaticTitleRequests.has(threadId))return;
+  automaticTitleRequests.add(threadId);
+  rpcCall('thread/title/generate',{threadId},45000).catch(()=>{}).finally(()=>automaticTitleRequests.delete(threadId));
+}
+function applyThreadTitle(params){
+  const id=params.threadId,name=params.threadName;if(typeof id!=='string'||typeof name!=='string')return;
+  const known=knownThreadTitles.get(id)||desktop.threads.find(thread=>thread.id===id)?.name;
+  if(params.source==='automatic'&&known&&known!==name)return;
+  knownThreadTitles.set(id,name);const thread=desktop.threads.find(thread=>thread.id===id);if(thread)thread.name=name;
+  threadTitleRevisions.set(id,(threadTitleRevisions.get(id)||0)+1);
+  const tab=desktop.tabs.find(tab=>tab.id===id);if(tab)tab.title=name;
+  if(currentThread===id&&!desktop.library&&!desktop.document&&!document.body.classList.contains('in-settings')&&!document.body.classList.contains('in-scheduled'))$('topbar-title').textContent=name;
+  renderTabs();if(typeof codexUpdateDocumentTitle==='function')codexUpdateDocumentTitle();
+}
 const rpcClientPrefix=window.crypto?.randomUUID?.() || ('client-'+Date.now()+'-'+Math.random().toString(36).slice(2));
 let eventStream;
 let transportReady = Promise.resolve();
@@ -60,7 +82,9 @@ handleServerNotification=function(method,p){
   if(method==='desktop/download/completed'){toast(p.success?'Exported to '+(p.path||'Downloads'):'Export failed');return;}
   if(method==='automation/error'){toast(p.message||'A background task needs attention');return;}
   previousNotification(method,p);
+  if(method==='thread/name/updated')applyThreadTitle(p);
   if(method==='turn/completed') {
+    if(automaticTitleCandidates.delete(p.threadId)&&p.turn?.status==='completed')requestAutomaticTitle(p.threadId);
     for(const [id,request] of desktop.approvals){if(request.params.threadId===p.threadId)desktop.approvals.delete(id);}
     const tab=desktop.tabs.find(t=>t.id===p.threadId);if(tab)tab.running=false;renderTabs();
     if(p.threadId!==currentThread) rpcCall('desktop/threadMetadata/set',{threadId:p.threadId,unread:true}).then(refreshThreads).catch(showError);
@@ -169,14 +193,15 @@ function threadRow(t){
   row.oncontextmenu=e=>{e.preventDefault();threadMenu(e,t);};return row;
 }
 openThread=async function(id){
-  const ticket=++desktop.navigation;saveDraft();await flushDocument();if(ticket!==desktop.navigation)return;closeSettingsView();hideLibrary();closeFloatingMenu();
+  const ticket=++desktop.navigation,nameRevision=threadTitleRevisions.get(id)||0;saveDraft();await flushDocument();if(ticket!==desktop.navigation)return;closeSettingsView();hideLibrary();closeFloatingMenu();
   const r=await rpcCall('thread/resume',{threadId:id});if(ticket!==desktop.navigation)return;
   if(r.thread.mode&&r.thread.mode!==desktop.mode){desktop.mode=r.thread.mode;updateModeUI();}
   currentThread=r.thread.id;desktop.projectId=r.thread.projectId||null;updateCwdUI(r.cwd||currentCwd);clearTimeline();desktop.autoScroll=true;
+  if(r.thread.name&&(threadTitleRevisions.get(id)||0)===nameRevision)knownThreadTitles.set(currentThread,r.thread.name);
   if(typeof codexPermissionsRestore==='function')codexPermissionsRestore(r.thread);
   for(const turn of r.thread.turns||[]){activeTurnBlock=null;for(const item of turn.items||[])upsertTimelineItem(item);finalizeTurnWorkedDivider(activeTurnBlock,turn.durationMs);}
-  $('topbar-title').textContent=r.thread.name||r.thread.preview||'Chat';$('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');
-  setTurnStatus(r.thread.status?.type==='active');addTab(r.thread);restoreDraft();renderPendingApprovals();
+  $('topbar-title').textContent=knownThreadTitles.get(id)||r.thread.name||r.thread.preview||'Chat';$('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');
+  setTurnStatus(r.thread.status?.type==='active');addTab({...r.thread,name:knownThreadTitles.get(id)||r.thread.name});restoreDraft();renderPendingApprovals();
   if(typeof webSearchThreadOpened==='function')webSearchThreadOpened(r.thread);
   await rpcCall('desktop/threadMetadata/set',{threadId:currentThread,unread:false});refreshThreads();
 };
@@ -260,8 +285,9 @@ sendTurn=async function(){
     if(t?.readOnly){const r=await rpcCall('thread/fork',{threadId:target});target=r.thread.id;if(typeof webSearchThreadStarted==='function')webSearchThreadStarted(r.thread,draft,search);if(ticket===desktop.navigation){currentThread=target;addTab(r.thread);}}
     if(ticket===desktop.navigation){$('composer-input').value='';autoResizeInput();closeAutocomplete();desktopAttachments=[];mentionedFiles=[];renderComposerChips();desktop.drafts.delete(target);desktop.drafts.delete(draft);desktop.autoScroll=true;}
     const input=[...(raw?[{type:'text',text:raw}]:[]),...attachments,...mentions.map(path=>({type:'mention',name:path,path}))];
+    if(mode==='codex'&&!knownThreadTitles.has(target)&&!desktop.threads.find(thread=>thread.id===target)?.name)automaticTitleCandidates.add(target);
     await rpcCall('turn/start',{threadId:target,model,reasoningEffort:effort,serviceTier,...permissions,...search,sandboxPolicy:{type:sandbox==='read-only'?'readOnly':sandbox==='danger-full-access'?'dangerFullAccess':'workspaceWrite'},input});
-    if(ticket===desktop.navigation){const latest=desktop.threads.find(thread=>thread.id===target)||t;$('topbar-title').textContent=latest?.name||latest?.preview||raw.slice(0,60)||'Chat';}
+    if(ticket===desktop.navigation){const latest=desktop.threads.find(thread=>thread.id===target)||t;$('topbar-title').textContent=knownThreadTitles.get(target)||latest?.name||latest?.preview||raw.slice(0,60)||'Chat';}
   }catch(error){if(ticket===desktop.navigation){$('composer-input').value=raw;desktopAttachments=attachments;mentionedFiles=mentions;renderComposerChips();autoResizeInput();}else desktop.drafts.set(target||draft,raw);throw error;}
   finally{desktop.loading=false;}
 };
@@ -350,7 +376,7 @@ renderDrawerContent=async function(){if(currentDrawerTab==='document'){if(deskto
 const baseOpenSettings=openSettingsView;
 openSettingsView=async function(section='general'){const ticket=++desktop.navigation;await flushDocument();if(ticket!==desktop.navigation)return;hideLibrary();$('nav-home').classList.remove('active');$('nav-library')?.classList.remove('active');document.body.classList.add('in-settings');desktop.documentNavigation++;baseCloseDrawer();currentSettingsSection=section;$('settings-body').innerHTML='<p class="settings-sub">Loading…</p>';if(typeof syncShellNavigation==='function')syncShellNavigation();await baseOpenSettings(section);};
 const baseCloseSettings=closeSettingsView;
-closeSettingsView=function(){document.body.classList.remove('in-settings');baseCloseSettings();};
+closeSettingsView=function(){const wasOpen=document.body.classList.contains('in-settings');document.body.classList.remove('in-settings');baseCloseSettings();if(wasOpen){restoreConversationTitle();if(typeof syncShellNavigation==='function')syncShellNavigation();}};
 const baseHandleComposerInput=handleComposerInput;
 handleComposerInput=async function(){if(desktop.mode==='chat'){autoResizeInput();closeAutocomplete();return;}await baseHandleComposerInput();};
 const baseRenderSettings=renderSettingsSection;

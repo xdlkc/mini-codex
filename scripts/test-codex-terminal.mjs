@@ -9,10 +9,11 @@ const source=readFileSync(new URL('../src/gui_terminal.js',import.meta.url),'utf
 const plain=value=>JSON.parse(JSON.stringify(value));
 async function tick(){for(let i=0;i<30;i++)await Promise.resolve();}
 function harness(t){
-  const dom=new JSDOM('<!doctype html><div id="drawer-content"></div>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://127.0.0.1/'}),w=dom.window;t.after(()=>dom.window.close());
+  const dom=new JSDOM('<!doctype html><main id="main-col"><textarea id="composer-input"></textarea><div id="drawer-content"></div></main>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://127.0.0.1/'}),w=dom.window;t.after(()=>dom.window.close());
   const h={w,calls:[],errors:[],records:new Map(),handler:null,number:0};
   class Terminal {constructor(){this.cols=80;this.rows=24;this.options={};this.buffer='';}loadAddon(addon){this.addon=addon;}open(node){node.getClientRects=()=>[{}];}write(text,done){this.buffer+=text;done?.();}reset(){this.buffer='';}clear(){this.buffer='';}hasSelection(){return Boolean(this.selection);}getSelection(){return this.selection||'';}paste(text){this.input(text);}onData(fn){this.input=fn;}onKey(fn){this.keyInput=fn;}onTitleChange(fn){this.changeTitle=fn;}attachCustomKeyEventHandler(fn){this.key=fn;}focus(){}dispose(){this.disposed=true;}}
   Object.assign(w,{$:id=>w.document.getElementById(id),Terminal,FitAddon:{FitAddon:class {fit(){}}},ResizeObserver:class {observe(){}disconnect(){}},
+    showLibrary:async()=>{if(h.libraryHandler)return h.libraryHandler();},newThread:async()=>{w.desktop.library=false;w.desktop.navigation++;},
     desktop:{mode:'codex',navigation:1},host:'alpha',currentCwd:'/repo',currentThread:'chat-a',drawerOpen:true,currentDrawerTab:'terminal',
     codexText:en=>en,codexEnvPath:value=>String(value).replace(/\/+$/,'')||'/',remoteContext:()=>w.host,remoteUi:{byConnection:new Map([['a',{profileId:'alpha'}],['b',{profileId:'beta'}]])},
     workspaceCapture:()=>{const host=w.host,navigation=w.desktop.navigation;return {key:host,navigation,call:async(method,params={})=>{
@@ -103,8 +104,8 @@ test('shell OSC titles follow the reference cwd-prefix rules without changing fi
 
 test('closing Terminal before its session list arrives does not create a PTY or reopen the inspector',async t=>{
   const h=harness(t),w=h.w;let resolve;h.handler=method=>method==='terminal/list'?new Promise(done=>resolve=done):undefined;
-  const opening=w.codexTerminalRender();await tick();w.drawerOpen=false;resolve({data:[]});await opening;
-  assert.equal(w.drawerOpen,false);assert.equal(h.calls.filter(c=>c.method==='terminal/create').length,0);
+  const opening=w.codexTerminalRender();await tick();w.codexTerminalClose();resolve({data:[]});await opening;
+  assert.equal(w.__terminalUi.open,false);assert.equal(w.document.querySelector('#codex-terminal-dock').hidden,true);assert.equal(h.calls.filter(c=>c.method==='terminal/create').length,0);
 });
 test('a pending new terminal preserves a subsequent Files selection and remains available on return',async t=>{
   const h=harness(t),w=h.w;await w.codexTerminalRender();await tick();let resolve;const state={id:'delayed-pty',host:'alpha',cwd:'/repo',threadId:'chat-a',title:'Delayed terminal',status:'running',sequence:0,output:''};
@@ -112,4 +113,21 @@ test('a pending new terminal preserves a subsequent Files selection and remains 
   const opening=w.document.querySelector('[aria-label="New terminal"]').onclick();await tick();w.currentDrawerTab='files';w.document.querySelector('#drawer-content').textContent='Files view';h.records.set(state.id,state);resolve({terminal:state});await opening;
   assert.equal(w.currentDrawerTab,'files');assert.equal(w.document.querySelector('#drawer-content').textContent,'Files view');assert.equal(h.sessions().size,2);
   h.handler=null;w.currentDrawerTab='terminal';await w.codexTerminalRender();await tick();assert.equal(w.document.querySelector('[role=tab][aria-selected=true]').textContent,'Delayed terminal');
+});
+
+test('Terminal opens below the conversation without replacing the file inspector, and closing its panel keeps its PTY',async t=>{
+  const h=harness(t),w=h.w;w.currentDrawerTab='files';w.drawerOpen=true;w.document.querySelector('#drawer-content').textContent='Files stay open';
+  await w.toggleDrawer('terminal');await tick();const session=h.session(),term=session.term;
+  assert.equal(w.document.querySelector('#codex-terminal-dock').parentElement.id,'main-col');assert.equal(w.document.querySelector('#drawer-content').textContent,'Files stay open');assert.equal(w.currentDrawerTab,'files');assert.equal(w.drawerOpen,true);
+  await w.toggleDrawer('terminal');assert.equal(w.__terminalUi.open,false);assert.equal(h.sessions().size,1);assert.equal(h.records.size,1);
+  await w.toggleDrawer('terminal');await tick();assert.equal(h.session().term,term);assert.equal(h.calls.filter(c=>c.method==='terminal/create').length,1);
+});
+test('the bottom terminal hides in other views and resumes the same session when returning',async t=>{
+  const h=harness(t),w=h.w;await w.codexTerminalRender();await tick();const term=h.session().term;
+  w.document.body.classList.add('in-settings');w.codexTerminalSyncDock();assert.equal(w.document.querySelector('#codex-terminal-dock').hidden,true);
+  w.document.body.classList.remove('in-settings');w.desktop.navigation++;w.codexTerminalSyncDock();await tick();assert.equal(w.document.querySelector('#codex-terminal-dock').hidden,false);assert.equal(h.session().term,term);assert.equal(h.calls.filter(c=>c.method==='terminal/create').length,1);
+});
+
+test('an auxiliary view hides the terminal while loading and a later chat navigation can restore it',async t=>{
+ const h=harness(t),w=h.w;await w.codexTerminalRender();await tick();let resolve;h.libraryHandler=()=>new Promise(done=>resolve=done);const library=w.showLibrary();await tick();assert.equal(w.document.querySelector('#codex-terminal-dock').hidden,true);await w.newThread();await tick();assert.equal(w.document.querySelector('#codex-terminal-dock').hidden,false);resolve();await library;assert.equal(w.document.querySelector('#codex-terminal-dock').hidden,false);
 });

@@ -426,7 +426,7 @@ async function docsReviewProposal(session,proposalId){
 // Every document remains local, including a page opened alongside an SSH task.
 async function docsLeave(){
   const ticket=++documentsUi.navigation;++desktop.navigation;await flushDocument();if(ticket!==documentsUi.navigation)return false;
-  docsUnmount();desktop.document=null;$('inspector-drawer')?.classList.remove('document-open');baseCloseDrawer();return true;
+  docsUnmount();desktop.document=null;$('inspector-drawer')?.classList.remove('document-open');baseCloseDrawer();if(typeof restoreConversationTitle==='function')restoreConversationTitle();return true;
 }
 for(const name of ['newThread','openThread','switchMode','openSettingsView','openScheduledView','showLibrary','showFilesLibrary','showImagesLibrary','remoteSelect']){
   const original=window[name];if(typeof original!=='function')continue;

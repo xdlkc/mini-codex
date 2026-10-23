@@ -10,6 +10,7 @@ APP_NAME="Mini ChatGPT"
 BUNDLE_ID="com.minicodex.desktop"
 BUILD_PROFILE="release"
 BUILD_ARCH=""
+SIGNING_MODE="${MACOS_SIGNING_MODE:-}"
 APP_ONLY=0
 REGEN_ICON=0
 while [[ $# -gt 0 ]]; do
@@ -17,16 +18,26 @@ while [[ $# -gt 0 ]]; do
     --debug) BUILD_PROFILE="debug"; shift ;;
     --app-only) APP_ONLY=1; shift ;;
     --regen-icon) REGEN_ICON=1; shift ;;
+    --signing)
+      [[ $# -ge 2 ]] || { echo "--signing requires developer-id or ad-hoc" >&2; exit 2; }
+      SIGNING_MODE="$2"; shift 2 ;;
     --arch)
       [[ $# -ge 2 ]] || { echo "--arch requires universal, arm64, x86_64 or native" >&2; exit 2; }
       BUILD_ARCH="$2"; shift 2 ;;
     --help)
-      echo "Usage: scripts/package-macos.sh [--arch universal|arm64|x86_64|native] [--debug] [--app-only] [--regen-icon]"
+      echo "Usage: scripts/package-macos.sh [--arch universal|arm64|x86_64|native] [--debug] [--app-only] [--regen-icon] [--signing developer-id|ad-hoc]"
       echo "Release builds default to Universal 2 (Apple Silicon and Intel); debug builds default to native."
+      echo "Release builds require Developer ID identities and a notarytool Keychain profile. Ad-hoc builds are local tests only."
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
+if [[ -z "$SIGNING_MODE" ]]; then
+  if [[ "$BUILD_PROFILE" == release ]]; then SIGNING_MODE=developer-id; else SIGNING_MODE=ad-hoc; fi
+fi
+export MACOS_SIGNING_MODE="$SIGNING_MODE"
+source "$ROOT_DIR/scripts/lib/macos-signing.sh"
+macos_distribution_preflight "$APP_ONLY"
 if [[ -z "$BUILD_ARCH" ]]; then
   if [[ "$BUILD_PROFILE" == "release" ]]; then BUILD_ARCH="universal"; else BUILD_ARCH="native"; fi
 fi
@@ -61,6 +72,7 @@ APP_BUNDLE="$DIST_DIR/${APP_NAME}.app"
 ARTIFACT_SUFFIX=""
 [[ "$BUILD_ARCH" == "universal" ]] || ARTIFACT_SUFFIX="-${EXPECTED_ARCHS[0]}"
 [[ "$BUILD_PROFILE" != "debug" ]] || ARTIFACT_SUFFIX="${ARTIFACT_SUFFIX}-debug"
+[[ "$SIGNING_MODE" != ad-hoc ]] || ARTIFACT_SUFFIX="${ARTIFACT_SUFFIX}-unnotarized"
 DMG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos${ARTIFACT_SUFFIX}.dmg"
 PKG_PATH="$DIST_DIR/${APP_NAME}-${VERSION}-macos${ARTIFACT_SUFFIX}.pkg"
 
@@ -183,9 +195,15 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-codesign --force --deep --sign - "$APP_BUNDLE"
+macos_sign_app "$APP_BUNDLE"
 xcrun lipo "$APP_BUNDLE/Contents/MacOS/mcodex" -verify_arch "${EXPECTED_ARCHS[@]}"
 codesign --verify --deep --strict --all-architectures "$APP_BUNDLE"
+if [[ "$SIGNING_MODE" == developer-id ]]; then
+  macos_notarize "$APP_BUNDLE" "$DIST_DIR/notarization"
+  macos_assess_app "$APP_BUNDLE"
+else
+  echo "LOCAL TEST BUILD: ad-hoc signed, not notarized. Other Macs may reject this app." >&2
+fi
 
 if [[ "$APP_ONLY" == "1" ]]; then
   echo "App bundle ready: $APP_BUNDLE"
@@ -207,6 +225,9 @@ hdiutil create \
   -format UDZO \
   "$DMG_PATH" >/dev/null
 rm -rf "$DMG_STAGE"
+if [[ "$SIGNING_MODE" == developer-id ]]; then
+  codesign --force --sign "$MACOS_APP_SIGN_IDENTITY" --timestamp "$DMG_PATH"
+fi
 
 echo "==> [5/5] Building macOS Installer PKG (${PKG_PATH})..."
 rm -f "$PKG_PATH"
@@ -216,13 +237,34 @@ mkdir -p "$PKG_STAGE/root/usr/local/bin"
 cp -R "$APP_BUNDLE" "$PKG_STAGE/root/Applications/${APP_NAME}.app"
 ln -s "/Applications/${APP_NAME}.app/Contents/MacOS/mcodex" "$PKG_STAGE/root/usr/local/bin/mcodex"
 
+UNSIGNED_PKG="$PKG_STAGE/unsigned.pkg"
 pkgbuild \
   --root "$PKG_STAGE/root" \
   --identifier "${BUNDLE_ID}.pkg" \
   --version "${VERSION}" \
   --install-location "/" \
-  "$PKG_PATH" >/dev/null
+  "$UNSIGNED_PKG" >/dev/null
+if [[ "$SIGNING_MODE" == developer-id ]]; then
+  productsign --sign "$MACOS_INSTALLER_SIGN_IDENTITY" --timestamp "$UNSIGNED_PKG" "$PKG_PATH"
+else
+  mv "$UNSIGNED_PKG" "$PKG_PATH"
+fi
 rm -rf "$PKG_STAGE"
+if [[ "$SIGNING_MODE" == developer-id ]]; then
+  macos_notarize "$DMG_PATH" "$DIST_DIR/notarization"
+  macos_notarize "$PKG_PATH" "$DIST_DIR/notarization"
+  macos_assess_installers "$DMG_PATH" "$PKG_PATH"
+fi
+python3 - "$DIST_DIR" "$APP_BUNDLE" "$DMG_PATH" "$PKG_PATH" "$SIGNING_MODE" "$VERSION" <<'PY'
+import hashlib,json,pathlib,sys,os,subprocess
+directory,app,dmg,pkg,mode,version=sys.argv[1:]
+artifacts=[{'name':pathlib.Path(p).name,'sha256':hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()} for p in (dmg,pkg)]
+commit=os.environ.get('MACOS_SOURCE_COMMIT')
+if not commit:
+    result=subprocess.run(['git','rev-parse','HEAD'],text=True,capture_output=True)
+    commit=result.stdout.strip() if result.returncode==0 else None
+pathlib.Path(directory,'distribution-manifest.json').write_text(json.dumps({'version':version,'sourceCommit':commit,'signingMode':mode,'notarized':mode=='developer-id','gatekeeperVerified':mode=='developer-id','appName':pathlib.Path(app).name,'artifacts':artifacts},indent=2)+'\n')
+PY
 
 echo ""
 echo "Packaging complete:"

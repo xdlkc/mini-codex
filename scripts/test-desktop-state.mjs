@@ -17,6 +17,7 @@ const production = [
   between('const desktop =', 'const $ ='),
   between('const $ =', 'const titleCase ='),
   between('const titleCase =', 'const uiIcon ='),
+  between('const automaticTitleCandidates=', 'const rpcClientPrefix='),
   between('function draftKey(', 'async function loadDesktop('),
   between('async function switchMode(', 'function fillPrompt('),
   between('function addTab(', 'function renderTabs('),
@@ -54,7 +55,7 @@ function harness(respond = () => ({})) {
     currentSandbox: 'workspace-write', isTurnActive: false,
     desktopAttachments: [], mentionedFiles: [],
     newThread() {}, openThread() {}, sendTurn() {},
-    document: { getElementById: id => nodes.get(id) || null },
+    document: { getElementById: id => nodes.get(id) || null,body:{classList:{contains:()=>false}} },
     clearTimeout,
     rpcCall(method, params = {}) {
       calls.push({ method, params });
@@ -231,4 +232,26 @@ test('prefilled Work requests enable Send without requiring an extra keystroke',
   vm.runInContext(between('function fillPrompt(','runPromptPreset=')+'\n'+between('function updateSubmitButton(','$(\'composer-input\').addEventListener'),context);
   context.fillPrompt('Prompt from a local Page');assert.equal(button.disabled,false);
   context.fillPrompt('  ');assert.equal(button.disabled,true);
+});
+
+test('automatic titles update the active header, tab and cached sidebar name, and never replace a manual rename',()=>{
+  const h=harness();h.context.currentThread='chat';h.desktop.threads=[{id:'chat',preview:'Long original prompt'}];h.desktop.tabs=[{id:'chat',title:'Long original prompt'}];let windowTitle='';h.context.codexUpdateDocumentTitle=()=>{windowTitle=h.nodes.get('topbar-title').textContent;};
+  h.context.applyThreadTitle({threadId:'chat',threadName:'修复底部终端',source:'automatic'});assert.equal(h.nodes.get('topbar-title').textContent,'修复底部终端');assert.equal(h.desktop.threads[0].name,'修复底部终端');assert.equal(h.desktop.tabs[0].title,'修复底部终端');assert.equal(windowTitle,'修复底部终端');
+  h.context.applyThreadTitle({threadId:'chat',threadName:'My chosen name'});h.context.applyThreadTitle({threadId:'chat',threadName:'Late generated name',source:'automatic'});assert.equal(h.nodes.get('topbar-title').textContent,'My chosen name');assert.equal(h.desktop.threads[0].name,'My chosen name');
+});
+test('a background title cannot replace a settings heading',()=>{
+  const h=harness();h.context.currentThread='chat';h.nodes.get('topbar-title').textContent='Settings';h.context.document.body.classList.contains=name=>name==='in-settings';h.context.applyThreadTitle({threadId:'chat',threadName:'Generated task',source:'automatic'});assert.equal(h.nodes.get('topbar-title').textContent,'Settings');
+});
+test('a successful queued title request is made after completion, while failed turns make no title request',async()=>{
+  const h=harness();h.context.currentThread='chat';h.context.handleServerNotification=()=>{};
+  vm.runInContext(between('const previousNotification=handleServerNotification;', 'const originalViewMode='),h.context);
+  vm.runInContext("automaticTitleCandidates.add('chat')",h.context);h.context.handleServerNotification('turn/completed',{threadId:'chat',turn:{status:'completed'}});await Promise.resolve();assert.equal(h.calls.filter(c=>c.method==='thread/title/generate').length,1);
+  vm.runInContext("automaticTitleCandidates.add('chat')",h.context);h.context.handleServerNotification('turn/completed',{threadId:'chat',turn:{status:'failed'}});await Promise.resolve();assert.equal(h.calls.filter(c=>c.method==='thread/title/generate').length,1);
+});
+
+test('restoring the conversation after another view uses its saved title',()=>{
+ const h=harness();h.context.currentThread='chat';h.desktop.threads=[{id:'chat',name:'已命名会话'}];h.nodes.get('topbar-title').textContent='Thread';h.context.restoreConversationTitle();assert.equal(h.nodes.get('topbar-title').textContent,'已命名会话');
+});
+test('a title notification arriving during resume takes priority over the older resume result',async()=>{
+ const reply=deferred(),h=harness(method=>method==='thread/resume'?reply.promise:{});const opening=h.context.openThread('chat');await until(()=>h.calls.some(c=>c.method==='thread/resume'),'resume did not start');h.context.applyThreadTitle({threadId:'chat',threadName:'最新手动标题'});reply.resolve({thread:{id:'chat',name:'Old title',mode:'codex',turns:[],status:{type:'idle'}},cwd:'/repo'});await opening;assert.equal(h.nodes.get('topbar-title').textContent,'最新手动标题');assert.equal(h.desktop.tabs[0].title,'最新手动标题');
 });

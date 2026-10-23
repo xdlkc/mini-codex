@@ -126,6 +126,15 @@ pub(crate) fn is_archived_at(store: &Path, id: &str) -> std::result::Result<bool
 static METADATA_LOCK: Mutex<()> = Mutex::new(());
 
 fn update_metadata(store: &Path, id: &str, change: impl FnOnce(&mut Value)) -> Result<()> {
+    update_metadata_activity(store, id, true, change)
+}
+
+fn update_metadata_activity(
+    store: &Path,
+    id: &str,
+    touch_activity: bool,
+    change: impl FnOnce(&mut Value),
+) -> Result<()> {
     let _lock = METADATA_LOCK
         .lock()
         .map_err(|_| anyhow!("session metadata lock poisoned"))?;
@@ -134,9 +143,11 @@ fn update_metadata(store: &Path, id: &str, change: impl FnOnce(&mut Value)) -> R
     std::fs::create_dir_all(parent)?;
     let mut metadata = read_metadata(store, id);
     change(&mut metadata);
-    metadata["updated_ms"] = json!(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis() as u64);
+    if touch_activity {
+        metadata["updated_ms"] = json!(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64);
+    }
     let temp = parent.join(format!(".{:032x}.tmp", rand::random::<u128>()));
     let result = (|| -> Result<()> {
         let mut file = std::fs::OpenOptions::new()
@@ -628,6 +639,22 @@ impl Session {
         })
     }
 
+    /// Automatic naming never overwrites a name chosen by a user or another request.
+    pub fn try_set_automatic_name(&self, name: &str) -> Result<bool> {
+        if self.is_read_only() {
+            return Ok(false);
+        }
+        let mut applied = false;
+        update_metadata_activity(&self.store, &self.id, false, |metadata| {
+            if !metadata["name"].is_string() {
+                metadata["name"] = json!(name);
+                metadata["nameSource"] = json!("automatic");
+                applied = true;
+            }
+        })?;
+        Ok(applied)
+    }
+
     /// Archive only changes this app's metadata, including for imported threads.
     pub fn archive(&self) -> Result<()> {
         update_metadata(&self.store, &self.id, |metadata| {
@@ -929,6 +956,29 @@ mod tests {
             let (_, meta, _, _) = parse_session_file(&path).unwrap();
             assert_eq!(meta["cwd"], cwd);
         }
+    }
+
+    #[test]
+    fn automatic_titles_are_set_once_and_never_replace_manual_names() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let session = Session::create_in(&store, "/title-test", "fixture").unwrap();
+        assert!(session
+            .try_set_automatic_name("Fix session terminal")
+            .unwrap());
+        assert!(read_metadata(&store, &session.id)["updated_ms"].is_null());
+        assert!(!session.try_set_automatic_name("Late title").unwrap());
+        session.try_set_name("My chosen title").unwrap();
+        assert!(!session
+            .try_set_automatic_name("Another late title")
+            .unwrap());
+        assert_eq!(
+            read_metadata(&store, &session.id)["name"],
+            "My chosen title"
+        );
+        let manual = Session::create_in(&store, "/title-test", "fixture").unwrap();
+        manual.try_set_name("").unwrap();
+        assert!(!manual.try_set_automatic_name("Generated title").unwrap());
     }
 
     #[test]

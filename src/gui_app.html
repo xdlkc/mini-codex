@@ -1099,7 +1099,7 @@ function bindExecutionElements(root,context){for(const element of root.querySele
 
 function maybeDragWindow(e) {
   if (e.target.closest("button, input, textarea, select, a, .pill-badge, .drawer-tab")) return;
-  if (e.button === 0) rpcSend({ __window: "drag" });
+  if (e.button === 0) { if(e.detail===2)e.preventDefault();rpcSend({ __window: "drag", clickCount: e.detail || 1 }); }
 }
 
 function escapeHtml(s) {

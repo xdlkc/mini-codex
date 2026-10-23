@@ -69,3 +69,10 @@ test('navigation during draft persistence does not open or transfer another chat
   const pending=h.c.nativePopout();await queued();h.c.currentThread='another-chat';h.c.desktop.navigation++;h.input.value='another draft';resolve();
   await assert.rejects(pending,/chat changed/);assert.equal(h.sent.length,0);assert.equal(h.input.value,'another draft');
 });
+
+test('titlebar double-click is forwarded to native window actions and interactive controls stay excluded',()=>{
+  const html=readFileSync(new URL('../src/gui_app.html',import.meta.url),'utf8'),a=html.indexOf('function maybeDragWindow('),b=html.indexOf('function escapeHtml(',a),sent=[];let prevented=0;
+  const context=vm.createContext({rpcSend:value=>sent.push(clone(value))});vm.runInContext(html.slice(a,b),context);
+  const event=(detail,interactive=false)=>({button:0,detail,target:{closest:()=>interactive?{}:null},preventDefault(){prevented++;}});
+  context.maybeDragWindow(event(1));context.maybeDragWindow(event(2));context.maybeDragWindow(event(2,true));assert.deepEqual(sent,[{__window:'drag',clickCount:1},{__window:'drag',clickCount:2}]);assert.equal(prevented,1);
+});

@@ -15,6 +15,8 @@ mod scheduled_runtime;
 mod thread_forks;
 #[path = "thread_handoff.rs"]
 mod thread_handoff;
+#[path = "thread_titles.rs"]
+mod thread_titles;
 #[path = "voice_runtime.rs"]
 mod voice_runtime;
 use crate::web_search::SearchMode;
@@ -76,6 +78,7 @@ struct Server {
     document_ai: document_ai::DocumentAi,
     local_environments: crate::local_environments::Environments,
     terminals: crate::terminal::Terminals,
+    title_requests: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 struct VoiceBinding {
@@ -2146,6 +2149,7 @@ impl Server {
                         json!({"thread": self.thread_json(&session.id, meta["name"].as_str(), &preview, cwd, meta["model"].as_str().unwrap_or(""), meta["created_ms"].as_u64().unwrap_or(0), now_ms(), active, turns)}),
                     )
                 }
+                "thread/title/generate" => self.generate_thread_title(&p).await,
                 "thread/name/set" => {
                     let id = p["threadId"].as_str().ok_or_else(|| err("threadId"))?;
                     let name = p["name"].as_str().ok_or_else(|| err("name"))?;
@@ -3185,6 +3189,7 @@ impl Server {
             return Err(bad("input is empty"));
         }
         let mut presentation = json!({"text":if imported_attachments.is_empty()&&workspace_files.is_empty(){&text}else{&display_text},"attachments":imported_attachments,"workspaceFiles":workspace_files});
+        presentation["titlePrompt"] = json!(display_text);
         let history_len;
         {
             let mut a = t.agent.lock().await;
@@ -3934,6 +3939,7 @@ pub(crate) async fn run_channel_until(
         document_ai,
         local_environments: crate::local_environments::Environments::new(out.clone()),
         terminals: crate::terminal::Terminals::new(out.clone()),
+        title_requests: Default::default(),
         models: Arc::new(models::Catalog::default()),
         out,
         shared,
@@ -4078,6 +4084,7 @@ mod tests {
                 document_ai,
                 local_environments: crate::local_environments::Environments::new(out.clone()),
                 terminals: crate::terminal::Terminals::new(out.clone()),
+                title_requests: Default::default(),
                 models: Arc::new(models::Catalog::default()),
                 out,
                 shared: Shared {

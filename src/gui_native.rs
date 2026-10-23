@@ -24,6 +24,10 @@ mod native_shell;
 #[path = "native_integration.rs"]
 mod native_integration;
 
+#[cfg(target_os = "macos")]
+#[path = "native_window_actions.rs"]
+mod native_window_actions;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -54,6 +58,8 @@ struct NativeWindow {
     webview: WebView,
     window: Window,
     kind: WindowKind,
+    #[cfg(target_os = "macos")]
+    actions: native_window_actions::Actions,
     ready: std::cell::Cell<bool>,
     pending: std::cell::RefCell<Vec<(String, Value)>>,
 }
@@ -199,6 +205,8 @@ fn make_window(
         webview,
         window,
         kind,
+        #[cfg(target_os = "macos")]
+        actions: native_window_actions::Actions::default(),
         ready: std::cell::Cell::new(false),
         pending: std::cell::RefCell::new(Vec::new()),
     })
@@ -386,7 +394,10 @@ pub fn launch(shared: Shared) -> Result<()> {
         match name {
             "external"=>{if let Some(url)=value["url"].as_str(){open_external_link(url);}}
             "ready"=>{if let Some(window)=windows.get(&id){window.ready.set(true);let pending=std::mem::take(&mut *window.pending.borrow_mut());for (action,params) in pending{invoke(window,&action,params);}}}
-            "drag"=>{if let Some(window)=windows.get(&id){let _=window.window.drag_window();}}
+            "drag"=>{if let Some(window)=windows.get(&id){if value["clickCount"].as_u64()==Some(2){
+                #[cfg(target_os="macos")]window.actions.double_click(&window.window);
+                #[cfg(not(target_os="macos"))]window.window.set_maximized(!window.window.is_maximized());
+            }else{let _=window.window.drag_window();}}}
             "requestClose"=>{if quit_pending.is_none()&&closing.insert(id){if !windows.get(&id).is_some_and(request_close){closing.remove(&id);}}}
             "quit"=>{
                 if quit_pending.is_some(){return;}if !closing.is_empty(){quit_deferred=true;return;}quit_deferred=false;
